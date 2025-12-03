@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Node
+node_modules/
+.npm/
+dist/
+.svelte-kit/
+
+# Database
+*.db
+*.sqlite3
+
+# Heavy Media Files
+videos/
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+
+# 3D Files
+*.glb
+*.gltf
+*.fbx
+*.obj
+*.blend
+*.stl
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+*.code-workspace
