@@ -112,34 +112,50 @@ def forward_kinematics(
         
     return global_pos.tolist()
 
-def estimate_skeleton_offsets(joints_3d: List[List[float]]) -> np.ndarray:
+    return offsets
+
+def calculate_offsets_from_pose(
+    joints_3d: List[List[float]], 
+    rotations: List[List[List[float]]]
+) -> np.ndarray:
     """
-    Estimate bone offsets from a posed 3D skeleton.
-    Note: This is an approximation because we don't know the rotations that generated this pose.
-    However, for simple scaling, we can just compute the lengths and apply them to the mean direction.
+    Calculate exact bone offsets from a posed skeleton and its rotations.
+    This reverses the FK process to find the offsets that would generate these joints
+    given these rotations.
+    
+    Args:
+        joints_3d: 24x3 global joint positions
+        rotations: 24x3x3 local rotation matrices
+        
+    Returns:
+        24x3 offsets (relative to parent in T-pose frame)
     """
     joints = np.array(joints_3d)
+    rots = np.array(rotations)
     offsets = np.zeros((24, 3))
     
-    # Use mean offsets as base for direction
-    mean_offsets = SMPL_MEAN_OFFSETS.copy()
+    # Global rotations
+    global_rots = np.zeros((24, 3, 3))
+    global_rots[0] = rots[0]
     
+    # Root offset is 0 (relative to itself/origin)
+    offsets[0] = [0, 0, 0]
+    
+    # Compute global rotations first
     for i in range(1, 24):
         parent = SMPL_PARENTS[i]
+        global_rots[i] = global_rots[parent] @ rots[i]
         
-        # Actual bone vector in current pose
+    # Compute offsets
+    # J_i = J_parent + R_parent_global @ Offset_i
+    # Offset_i = inv(R_parent_global) @ (J_i - J_parent)
+    for i in range(1, 24):
+        parent = SMPL_PARENTS[i]
         bone_vec = joints[i] - joints[parent]
-        bone_len = np.linalg.norm(bone_vec)
         
-        # Mean bone vector
-        mean_vec = mean_offsets[i]
-        mean_len = np.linalg.norm(mean_vec)
+        # Inverse of rotation matrix is its transpose
+        inv_parent_rot = global_rots[parent].T
         
-        if mean_len > 1e-6:
-            # Scale mean offset to match actual length
-            scale = bone_len / mean_len
-            offsets[i] = mean_vec * scale
-        else:
-            offsets[i] = mean_vec
-            
+        offsets[i] = inv_parent_rot @ bone_vec
+        
     return offsets

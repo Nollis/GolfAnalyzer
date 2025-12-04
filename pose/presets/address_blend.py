@@ -137,14 +137,16 @@ def slerp(q0: np.ndarray, q1: np.ndarray, alpha: float) -> np.ndarray:
     return (s0 * q0) + (s1 * q1)
 
 
-TORSO_JOINTS = {3, 6, 9, 12}  # spine1, spine2, spine3, neck (by index) - EXCLUDING pelvis (0) to keep global rot
-LOWER_BODY = {1, 2, 4, 5, 7, 8}  # hips, knees, ankles
+TORSO_JOINTS = {3, 6, 9, 12}  # spine1, spine2, spine3, neck
+LOWER_BODY   = {1, 2, 4, 5, 7, 8, 10, 11}  # hips, knees, ankles, feet
+ARMS_JOINTS  = {13, 14, 16, 17, 18, 19, 20, 21, 22, 23}  # collars, shoulders, elbows, wrists, hands
 
 
 def blend_with_address(
     dtl_pose: list[list[list[float]]],
-    strength_torso: float = 0.45,
-    strength_lower: float = 0.25,
+    strength_torso: float = 0.10,  # spine: *almost* no effect
+    strength_lower: float = 0.45,  # legs/stance: stronger
+    strength_arms:  float = 0.60,  # arms/wrists: strongest
 ) -> list[list[list[float]]]:
     """
     Blend the incoming DTL SMPL pose (24 x 3 x 3) with ADDRESS_POSE.
@@ -160,15 +162,20 @@ def blend_with_address(
     out: list[list[list[float]]] = []
 
     for idx, (A, B) in enumerate(zip(ADDRESS_POSE, dtl_pose)):
-        if idx in TORSO_JOINTS:
-            alpha = strength_torso
-        elif idx in LOWER_BODY:
+        if idx in LOWER_BODY:
             alpha = strength_lower
+        elif idx in ARMS_JOINTS:
+            alpha = strength_arms
+        elif idx in TORSO_JOINTS:
+            alpha = strength_torso
         else:
-            alpha = 0.0
+            alpha = 0.0  # pelvis (0) and anything else untouched
 
         if alpha <= 0.0:
-            out.append(B)
+            if isinstance(B, np.ndarray):
+                out.append(B.tolist())
+            else:
+                out.append(B)
             continue
 
         qA = mat3_to_quat(A)

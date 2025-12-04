@@ -155,31 +155,32 @@ async def analyze_swing(
         # We need to do this BEFORE metrics calculation so metrics reflect the blended pose
         if view in ["dtl", "down_the_line"] and hybrik_frames:
             print("[INFO] Applying address pose blending and updating metrics...")
+            from pose.kinematics import forward_kinematics, calculate_offsets_from_pose
             from pose.presets.address_blend import blend_with_address
-            from pose.kinematics import forward_kinematics, estimate_skeleton_offsets
             
             for i, frame in enumerate(hybrik_frames):
                 smpl_pose = frame.get("smpl_pose") # (24, 3, 3)
                 joints_3d = frame.get("joints_3d_24") # (24, 3)
                 
                 if smpl_pose is not None and joints_3d is not None:
-                    # 1. Blend rotations
+                    # 1. Calculate exact bone offsets from original pose
+                    # This ensures we respect the subject's proportions and the model's definition
+                    offsets = calculate_offsets_from_pose(joints_3d, smpl_pose)
+
+                    # 2. Blend rotations
                     blended_pose = blend_with_address(smpl_pose)
                     frame["smpl_pose"] = blended_pose
                     
-                    # 2. Estimate bone offsets from original joints (to preserve scale)
-                    offsets = estimate_skeleton_offsets(joints_3d)
-                    
-                    # 3. Re-compute joints using FK
+                    # 3. Re-compute joints using FK with blended rotations and original offsets
                     # Use original root position
                     root_pos = joints_3d[0]
                     new_joints = forward_kinematics(blended_pose, root_pos, offsets)
                     
                     # 4. Update frame data
-                    frame["joints_3d_24"] = np.array(new_joints)
+                    frame["joints_3d_24"] = new_joints
                     # Also update generic joints_3d if present
                     if "joints_3d" in frame:
-                        frame["joints_3d"] = np.array(new_joints)
+                        frame["joints_3d"] = new_joints
 
         # 2. Swing Detection - Pass HybrIK frames if available
         detector = SwingDetector()
