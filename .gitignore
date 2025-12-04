@@ -31,6 +31,15 @@ videos/
 *.blend
 *.stl
 
+# Hybrik Repo Heavy Files
+hybrik_repo/model_files/
+hybrik_repo/model_files.zip
+hybrik_repo/pretrained_models/
+hybrik_repo/assets/
+hybrik_repo/examples/
+hybrik_repo/output/
+hybrik_repo/logs/
+
 # OS
 .DS_Store
 Thumbs.db
