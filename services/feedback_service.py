@@ -2,7 +2,7 @@ import os
 import json
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
-from app.schemas import SwingMetrics, SwingScores, SwingFeedback, Drill, MetricScore
+from app.schemas import SwingMetrics, SwingScores, SwingFeedback, MetricScore, DrillResponse
 from reference.reference_profiles import get_reference_profile_for, ReferenceProfile
 
 class FeedbackService:
@@ -22,26 +22,70 @@ class FeedbackService:
         scores: SwingScores, 
         handedness: str, 
         club_type: str,
+        db: Optional[Any] = None, # Use Any to avoid circular imports at top level if needed, or import appropriately
         reference_profile: Optional[ReferenceProfile] = None
     ) -> SwingFeedback:
         """
         Generate AI-powered coaching feedback based on swing metrics.
-        
-        Args:
-            metrics: Computed swing metrics
-            scores: Metric scores (green/yellow/red ratings)
-            handedness: "Right" or "Left"
-            club_type: Type of club used
-            reference_profile: Optional reference profile for target values
         """
+        # --- 1. Identify Priority Issues from Scores ---
+        priority_metrics = []
+        for metric_key, score_info in scores.metric_scores.items():
+            if score_info.score in ["red", "yellow"]:
+                weight = getattr(score_info, 'weight', 1.0)
+                if weight > 0:
+                    priority_metrics.append((metric_key, score_info.score, weight))
+        
+        # Sort by severity (red first) then weight
+        priority_metrics.sort(key=lambda x: (0 if x[1] == 'red' else 1, -x[2]))
+        top_issues = priority_metrics[:3]
+        
+        # --- 2. Query DB for Drills (Deterministic) ---
+        final_drills = []
+        if db:
+            from app.models.drill import Drill as DrillModel
+            
+            # Collect target metrics we need drills for
+            target_metrics = [issue[0] for issue in top_issues]
+            
+            if target_metrics:
+                # Find drills that target these metrics
+                found_drills = db.query(DrillModel).filter(DrillModel.target_metric.in_(target_metrics)).all()
+                
+                # Convert to Schema format and prioritize
+                # We want to match them to the highest priority issues first
+                for issue_key, _, _ in top_issues:
+                    # Find drills for this specific issue
+                    matching = [d for d in found_drills if d.target_metric == issue_key]
+                    for d in matching:
+                        # Avoid duplicates
+                        if not any(fd.id == d.id for fd in final_drills):
+                            final_drills.append(DrillResponse(
+                                id=d.id,
+                                title=d.title,
+                                description=d.description,
+                                category=d.category,
+                                difficulty=d.difficulty,
+                                video_url=d.video_url,
+                                target_metric=d.target_metric
+                            ))
+                            
+                    if len(final_drills) >= 3:
+                        break
+                
+                # Trim to top 3
+                final_drills = final_drills[:3]
+        
+        # --- 3. Generate AI Feedback (Analysis Only) ---
         if not self.client:
-            return self._mock_feedback("OpenAI API Key not found. Returning mock feedback.")
+             # If no AI, return DB drills only (or mock)
+            return self._mock_feedback("OpenAI API Key not found.", final_drills)
 
         # Get reference profile for target values if not provided
         if reference_profile is None:
             reference_profile = get_reference_profile_for(club_type, "face_on")  # Default view
         
-        # Construct the prompt with better context
+        # Construct the prompt (Analysis Focused)
         system_prompt = """
 You are an expert golf coach with deep knowledge of biomechanics and swing mechanics. 
 You will be provided with biomechanical metrics from a student's golf swing, along with:
@@ -51,36 +95,23 @@ You will be provided with biomechanical metrics from a student's golf swing, alo
 
 Your task is to analyze these metrics and provide actionable coaching feedback.
 
-IMPORTANT GUIDELINES:
-1. Focus on the metrics marked as "red" or "yellow" first - these need the most attention
-2. Explain WHY each issue matters (e.g., "Early extension causes loss of power because...")
-3. Provide specific, actionable drills that address the root causes
-4. Prioritize issues that have the biggest impact on swing quality
-5. Be encouraging but honest - acknowledge what's working well
-6. Consider the relationship between metrics (e.g., tempo affects everything)
-7. DO NOT guess about video content - ONLY use the provided metrics
+GUIDELINES:
+1. Focus on the metrics marked as "red" or "yellow" first. These are the Priority Issues.
+2. Explain WHY each issue matters.
+3. BE SPECIFIC.
+4. Do NOT Suggest Drills. The integration system handles drill recommendations separately. Focus only on the analysis of the fault.
+5. Output valid JSON.
 
-Output must be a valid JSON object with the following structure:
+Structure:
 {
-    "summary": "2-3 sentences summarizing overall swing performance, highlighting strengths and main areas for improvement.",
-    "priority_issues": [
-        "Issue 1: Specific problem with explanation of why it matters",
-        "Issue 2: Another specific problem",
-        "Issue 3: Third priority issue (max 3)"
-    ],
-    "drills": [
-        {
-            "title": "Specific Drill Name",
-            "description": "Clear, step-by-step description of how to perform the drill and what it addresses"
-        }
-    ]
+    "summary": "2-3 sentences summarizing overall performance.",
+    "priority_issues": ["Issue 1: ...", "Issue 2: ..."],
+    "phase_feedback": { "address": "...", "top": "...", "impact": "...", "finish": "..." }
 }
-
-Keep drills practical and specific. Each drill should directly address one of the priority issues.
 """
-
-        # Prepare user message with better formatted data
+        # Prepare user message
         metrics_summary = self._format_metrics_for_prompt(metrics, scores, reference_profile)
+        
         user_message = f"""
 Student Profile:
 - Handedness: {handedness}
@@ -90,35 +121,34 @@ Student Profile:
 Swing Metrics Analysis:
 {metrics_summary}
 
-Provide coaching feedback in JSON format. Focus on actionable improvements based on the metrics above.
+Provide coaching feedback in JSON format.
 """
 
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4o-mini",  # More cost-effective than gpt-4o
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.7,
-                max_tokens=1000  # Limit response length
+                max_tokens=1500
             )
             
             content = response.choices[0].message.content
             data = json.loads(content)
             
-            drills = [Drill(**d) for d in data.get("drills", [])]
-            
             return SwingFeedback(
                 summary=data.get("summary", "No summary provided."),
                 priority_issues=data.get("priority_issues", []),
-                drills=drills
+                drills=final_drills, # Use deterministic list
+                phase_feedback=data.get("phase_feedback", {})
             )
 
         except Exception as e:
             print(f"Error generating feedback: {e}")
-            return self._mock_feedback(f"Error generating feedback: {str(e)}")
+            return self._mock_feedback(f"Error generating feedback: {str(e)}", final_drills)
 
     def _format_metrics_for_prompt(
         self, 
@@ -176,10 +206,32 @@ Provide coaching feedback in JSON format. Focus on actionable improvements based
             "Head Movement": ["head_sway_range", "early_extension_amount"]
         }
         
+        shown_keys = set()
+        
+        
+        # Define deprecated metrics to skip
+        deprecated_metrics = {
+            "shoulder_turn_top_deg", 
+            "hip_turn_top_deg", 
+            "spine_tilt_address_deg", 
+            "spine_tilt_impact_deg",
+            "head_movement_forward_cm",
+            "head_movement_vertical_cm",
+            "shaft_lean_impact_deg",
+            "lead_wrist_flexion_address_deg",
+            "lead_wrist_flexion_top_deg",
+            "lead_wrist_flexion_impact_deg",
+            "lead_wrist_hinge_top_deg"
+        }
+
         for category, metric_keys in categories.items():
             category_lines = []
             for key in metric_keys:
                 if key not in m_dict:
+                    continue
+
+                if key in deprecated_metrics:
+                    print(f"DEBUG: Skipping deprecated metric: {key}")
                     continue
                     
                 val = m_dict[key]
@@ -187,34 +239,89 @@ Provide coaching feedback in JSON format. Focus on actionable improvements based
                     continue
                     
                 score_info = s_dict.get(key)
-                rating = score_info.score if score_info else "unknown"
-                
-                # Get target values from reference profile
-                target_info = reference_profile.targets.get(key)
-                if target_info:
-                    target_str = f"Target: {target_info.ideal_val:.1f} (range: {target_info.min_val:.1f}-{target_info.max_val:.1f})"
+                if not score_info:
+                    # Metric exists but no score info (e.g. unweighted or new metric without target)
+                    # Include it as context
+                    rating = None
+                    target_str = "(Context Only)"
                 else:
-                    target_str = "No target available"
+                    rating = score_info.score
+                    # Check if unweighted
+                    if getattr(score_info, 'weight', 1.0) <= 0.0:
+                        rating = None # Treat as context only
+                        target_str = "(Unweighted)"
+                    else:
+                        # Get target values from reference profile
+                        target_info = reference_profile.targets.get(key)
+                        if target_info:
+                            tgt_str = self._format_metric_value(key, target_info.ideal_val)
+                            min_str = self._format_metric_value(key, target_info.min_val)
+                            max_str = self._format_metric_value(key, target_info.max_val)
+                            target_str = f"Target: {tgt_str} (range: {min_str}-{max_str})"
+                        else:
+                            target_str = "No target available"
                 
-                # Format value based on metric type
+                # Format value
                 display_name = metric_names.get(key, key.replace("_", " ").title())
                 formatted_val = self._format_metric_value(key, val)
                 
-                # Color code rating
-                rating_emoji = {
-                    "green": "✅",
-                    "yellow": "⚠️",
-                    "red": "❌"
-                }.get(rating, "❓")
+                if rating:
+                    rating_emoji = {
+                        "green": "✅",
+                        "yellow": "⚠️",
+                        "red": "❌"
+                    }.get(rating, "❓")
+                    line = f"  {rating_emoji} {display_name}: {formatted_val} | Rating: {rating.upper()} | {target_str}"
+                else:
+                    # Display as informational context
+                    line = f"  ℹ️ {display_name}: {formatted_val} | {target_str}"
                 
-                category_lines.append(
-                    f"  {rating_emoji} {display_name}: {formatted_val} | Rating: {rating.upper()} | {target_str}"
-                )
+                category_lines.append(line)
+                shown_keys.add(key)
             
             if category_lines:
                 lines.append(f"\n{category}:")
                 lines.extend(category_lines)
-        
+                
+        # Add any remaining metrics that weren't included in categories or didn't have scores
+        # This ensures the AI sees *all* data even if we don't have a target/rating for it
+        additional_lines = []
+        for key, val in m_dict.items():
+            if key in shown_keys:
+                continue
+            if val is None:
+                continue
+            # Skip internal or irrelevant fields if any
+            if key in ["session_id", "user_id", "video_url"]:
+                continue
+            
+            # Debug key
+            # print(f"Processing key: '{key}'") 
+
+            # Check deprecated metrics
+            if key in deprecated_metrics:
+                # print(f"Skipping deprecated: {key}")
+                continue
+                
+            display_name = metric_names.get(key, key.replace("_", " ").title())
+            formatted_val = self._format_metric_value(key, val)
+            
+            # Check if we have a score but it was skipped due to weight/category logic
+            rating_str = ""
+            score_info = s_dict.get(key)
+            if score_info and score_info.score:
+                 # Check if we skipped it earlier (e.g. weight 0)
+                 if getattr(score_info, 'weight', 1.0) <= 0.0:
+                     rating_str = " | (Unweighted)"
+                 else:
+                     rating_str = f" | Rating: {score_info.score.upper()}"
+            
+            additional_lines.append(f"  ℹ️ {display_name}: {formatted_val}{rating_str}")
+
+        if additional_lines:
+            lines.append("\nAdditional Context:")
+            lines.extend(additional_lines)
+
         return "\n".join(lines)
     
     def _format_metric_value(self, metric_key: str, value: Any) -> str:
@@ -223,20 +330,24 @@ Provide coaching feedback in JSON format. Focus on actionable improvements based
             return "N/A"
         
         if isinstance(value, (int, float)):
+            # Explicit key checks first
+            if "duration" in metric_key or "ms" in metric_key:
+                 return f"{value/1000:.2f}s"
+            
             if "ratio" in metric_key or "tempo" in metric_key:
                 return f"{value:.2f}:1"
-            elif "deg" in metric_key or "angle" in metric_key:
+            
+            if "deg" in metric_key or "angle" in metric_key:
                 return f"{value:.1f}°"
-            elif "ms" in metric_key or "duration" in metric_key:
-                return f"{value/1000:.2f}s"
-            elif "range" in metric_key or "amount" in metric_key:
+            
+            if "range" in metric_key or "amount" in metric_key or "index" in metric_key:
                 return f"{value:.3f}"
-            else:
-                return f"{value:.1f}"
+            
+            return f"{value:.1f}"
         
         return str(value)
 
-    def _mock_feedback(self, reason: str) -> SwingFeedback:
+    def _mock_feedback(self, reason: str, drills: List[DrillResponse] = []) -> SwingFeedback:
         """Return mock feedback when AI generation is unavailable."""
         
         # Check if it's an auth/key error
@@ -249,13 +360,21 @@ Provide coaching feedback in JSON format. Focus on actionable improvements based
             summary = f"Feedback generation unavailable. Error: {reason}"
             priority_issues = ["Feedback generation failed. Please try regenerating."]
 
+        if not drills:
+            # Fallback mock drill if no DB drills provided
+            drills = [
+                 DrillResponse(
+                    id="mock-id",
+                    title="Review Your Metrics",
+                    description="Focus on metrics marked in red or yellow.",
+                    category="General",
+                    difficulty="All Levels"
+                )
+            ]
+
         return SwingFeedback(
             summary=summary,
             priority_issues=priority_issues,
-            drills=[
-                Drill(
-                    title="Review Your Metrics",
-                    description="Focus on metrics marked in red or yellow. Compare your values to the target ranges shown."
-                )
-            ]
+            drills=drills,
+            phase_feedback={}
         )

@@ -58,7 +58,54 @@ class SwingMetric(Base):
     knee_flex_right_address_deg = Column(Float)
     head_sway_range = Column(Float)
     early_extension_amount = Column(Float)
+    early_extension_amount = Column(Float, nullable=True)
+    
+    # Swing Path
+    swing_path_index = Column(Float, nullable=True)
 
+    # Hand Position (DTL)
+    hand_height_at_top_index = Column(Float, nullable=True)
+    hand_width_at_top_index = Column(Float, nullable=True)
+    head_drop_cm = Column(Float, nullable=True)
+    head_rise_cm = Column(Float, nullable=True)
+
+    # Extended MHR Metrics (Finish, Sway, Plane)
+    finish_balance = Column(Float, nullable=True)
+    
+    # Sway
+    pelvis_sway_top_cm = Column(Float, nullable=True)
+    pelvis_sway_impact_cm = Column(Float, nullable=True)
+    pelvis_sway_finish_cm = Column(Float, nullable=True)
+    shoulder_sway_top_cm = Column(Float, nullable=True)
+    shoulder_sway_impact_cm = Column(Float, nullable=True)
+    shoulder_sway_finish_cm = Column(Float, nullable=True)
+    pelvis_sway_range_cm = Column(Float, nullable=True)
+    shoulder_sway_range_cm = Column(Float, nullable=True)
+
+    # Swing Plane
+    swing_plane_top_deg = Column(Float, nullable=True)
+    swing_plane_impact_deg = Column(Float, nullable=True)
+    swing_plane_deviation_top_deg = Column(Float, nullable=True)
+    swing_plane_deviation_impact_deg = Column(Float, nullable=True)
+    swing_plane_shift_top_to_impact_deg = Column(Float, nullable=True)
+    arm_above_plane_at_top = Column(Boolean, nullable=True)
+
+    # Finish & Head Recovery
+    spine_angle_finish_deg = Column(Float, nullable=True)
+    spine_angle_top_deg = Column(Float, nullable=True) # Also used for extension calc
+    extension_from_address_deg = Column(Float, nullable=True)
+    chest_turn_finish_deg = Column(Float, nullable=True)
+    pelvis_turn_finish_deg = Column(Float, nullable=True)
+    head_rise_top_to_finish_cm = Column(Float, nullable=True)
+    head_lateral_shift_address_to_finish_cm = Column(Float, nullable=True)
+    
+    # Hand Finish
+    hand_height_finish_norm = Column(Float, nullable=True)
+    hand_depth_finish_norm = Column(Float, nullable=True)
+    hand_height_finish_label = Column(String, nullable=True)
+    hand_depth_finish_label = Column(String, nullable=True)
+    
+    # Backward compatibility fields
     # Legacy Metrics (kept for backward compatibility)
     shoulder_turn_top_deg = Column(Float, nullable=True)
     hip_turn_top_deg = Column(Float, nullable=True)
@@ -98,6 +145,7 @@ class SwingFeedbackDB(Base):
     summary = Column(String)
     priority_issues = Column(JSON) # List of strings
     drills = Column(JSON) # List of dicts
+    phase_feedback = Column(JSON) # Dict of phase -> feedback string
 
     session = relationship("SwingSession", back_populates="feedback")
 

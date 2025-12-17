@@ -1,6 +1,6 @@
 from pose.metrics import MetricsCalculator
 from app.schemas import SwingMetrics, SwingPhases
-from pose.mediapipe_wrapper import FramePose, Point3D
+from pose.types import FramePose, Point3D
 
 def test_auto_detection():
     calc = MetricsCalculator()

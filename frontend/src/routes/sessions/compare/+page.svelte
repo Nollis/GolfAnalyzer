@@ -1,8 +1,13 @@
 <script lang="ts">
-    import { onMount } from "svelte";
-    import { page } from "$app/stores";
-    import { token, isAuthenticated } from "$lib/stores/auth";
     import { goto } from "$app/navigation";
+    import { page } from "$app/stores";
+    import { onMount } from "svelte";
+    import {
+        initializeAuth,
+        isAuthenticated,
+        token,
+        waitForAuthReady,
+    } from "$lib/stores/auth";
 
     interface Session {
         session_id: string;
@@ -38,8 +43,14 @@
     let comparing = false;
 
     onMount(async () => {
+        await initializeAuth();
+        await waitForAuthReady();
+
         if (!$isAuthenticated) {
-            goto("/login");
+            const redirectParam = encodeURIComponent(
+                $page.url.pathname + $page.url.search,
+            );
+            goto(`/login?redirectTo=${redirectParam}`);
             return;
         }
 

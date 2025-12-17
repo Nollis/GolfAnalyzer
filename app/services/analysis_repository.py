@@ -45,6 +45,11 @@ class AnalysisRepository:
             knee_flex_right_address_deg=metrics_dict.get('knee_flex_right_address_deg'),
             head_sway_range=metrics_dict.get('head_sway_range'),
             early_extension_amount=metrics_dict.get('early_extension_amount'),
+            swing_path_index=metrics_dict.get('swing_path_index'),
+            hand_height_at_top_index=metrics_dict.get('hand_height_at_top_index'),
+            hand_width_at_top_index=metrics_dict.get('hand_width_at_top_index'),
+            head_drop_cm=metrics_dict.get('head_drop_cm'),
+            head_rise_cm=metrics_dict.get('head_rise_cm'),
             # Backward compatibility (old field names)
             shoulder_turn_top_deg=metrics_dict.get('shoulder_turn_top_deg'),
             hip_turn_top_deg=metrics_dict.get('hip_turn_top_deg'),
@@ -73,7 +78,8 @@ class AnalysisRepository:
                 session_id=db_session.id,
                 summary=feedback.summary,
                 priority_issues=feedback.priority_issues,
-                drills=[d.dict() for d in feedback.drills]
+                drills=[d.dict() for d in feedback.drills],
+                phase_feedback=feedback.phase_feedback
             )
             self.db.add(db_feedback)
 
@@ -86,6 +92,14 @@ class AnalysisRepository:
 
     def list_sessions(self, limit: int = 50):
         return self.db.query(SwingSession).order_by(SwingSession.created_at.desc()).limit(limit).all()
+
+    def delete_session(self, session_id: str) -> bool:
+        session = self.get_session(session_id)
+        if session:
+            self.db.delete(session)
+            self.db.commit()
+            return True
+        return False
 
     def create_reference_profile(self, data: ReferenceProfileCreate) -> ReferenceProfileDB:
         # Convert metrics to targets with +/- 10% tolerance
@@ -140,3 +154,96 @@ class AnalysisRepository:
             SwingSession.view == view,
             SwingSession.is_personal_best == True
         ).first()
+
+    def get_recent_swings(
+        self, 
+        user_id: str, 
+        club_type: str = None, 
+        limit: int = 5
+    ) -> list:
+        """
+        Get recent swings for a user, optionally filtered by club type.
+        
+        Args:
+            user_id: User's ID
+            club_type: Optional club type filter (e.g., 'driver', 'iron')
+            limit: Maximum number of swings to return
+        
+        Returns:
+            List of SwingSession objects, newest first.
+        """
+        query = self.db.query(SwingSession).filter(
+            SwingSession.user_id == user_id
+        )
+        
+        if club_type:
+            query = query.filter(SwingSession.club_type == club_type)
+        
+        return query.order_by(
+            SwingSession.created_at.desc()
+        ).limit(limit).all()
+
+    def get_recent_metrics(
+        self, 
+        user_id: str, 
+        club_type: str = None, 
+        limit: int = 5
+    ) -> list:
+        """
+        Get recent swing metrics as dictionaries for improvement delta calculation.
+        
+        Returns list of metric dicts, newest first.
+        """
+        sessions = self.get_recent_swings(user_id, club_type, limit)
+        result = []
+        
+        for session in sessions:
+            if session.metrics:
+                # Convert ORM object to dict
+                metrics_dict = {}
+                for col in session.metrics.__table__.columns:
+                    if col.name not in ['id', 'session_id']:
+                        val = getattr(session.metrics, col.name)
+                        if val is not None:
+                            metrics_dict[col.name] = val
+                result.append(metrics_dict)
+        
+        return result
+
+    def save_feedback(self, session_id: str, feedback: SwingFeedback) -> SwingFeedbackDB:
+        """
+        Save or update feedback for a session.
+        """
+        # Check if feedback already exists
+        db_feedback = self.db.query(SwingFeedbackDB).filter(SwingFeedbackDB.session_id == session_id).first()
+        
+        if db_feedback:
+            # Update existing
+            db_feedback.summary = feedback.summary
+            db_feedback.priority_issues = feedback.priority_issues
+            db_feedback.drills = [d.dict() for d in feedback.drills]
+            db_feedback.phase_feedback = feedback.phase_feedback
+        else:
+            # Create new
+            db_feedback = SwingFeedbackDB(
+                session_id=session_id,
+                summary=feedback.summary,
+                priority_issues=feedback.priority_issues,
+                drills=[d.dict() for d in feedback.drills],
+                phase_feedback=feedback.phase_feedback
+            )
+            self.db.add(db_feedback)
+            
+        with open("debug_log.txt", "a") as f:
+            f.write(f"DEBUG: Saving feedback for {session_id}\n")
+            f.write(f"DEBUG: Feedback data: {feedback.dict()}\n")
+            f.write(f"DEBUG: Phase feedback to save: {feedback.phase_feedback}\n")
+            
+        self.db.commit()
+        self.db.refresh(db_feedback)
+        
+        with open("debug_log.txt", "a") as f:
+             f.write(f"DEBUG: Saved DB Feedback ID: {db_feedback.id}\n")
+             f.write(f"DEBUG: Saved DB Phase Feedback: {db_feedback.phase_feedback}\n")
+
+        return db_feedback

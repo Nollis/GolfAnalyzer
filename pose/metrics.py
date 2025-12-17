@@ -27,7 +27,7 @@ from typing import List, Optional, Dict, Any, Tuple
 import math
 import numpy as np
 from scipy.signal import savgol_filter
-import mediapipe as mp
+# import mediapipe as mp # Removed legacy dependency
 
 # Try to import HybrIK utilities
 try:
@@ -45,23 +45,23 @@ except ImportError:
     smpl_to_mediapipe_format = None
 
 from app.schemas import SwingMetrics, SwingPhases
-from pose.mediapipe_wrapper import FramePose, Point3D
+from pose.types import FramePose, Point3D
 
-# MediaPipe body landmark indices
-mp_pose = mp.solutions.pose.PoseLandmark
-IDX_NOSE = mp_pose.NOSE.value
-IDX_L_SHOULDER = mp_pose.LEFT_SHOULDER.value
-IDX_R_SHOULDER = mp_pose.RIGHT_SHOULDER.value
-IDX_L_HIP = mp_pose.LEFT_HIP.value
-IDX_R_HIP = mp_pose.RIGHT_HIP.value
-IDX_L_WRIST = mp_pose.LEFT_WRIST.value
-IDX_R_WRIST = mp_pose.RIGHT_WRIST.value
-IDX_L_ELBOW = mp_pose.LEFT_ELBOW.value
-IDX_R_ELBOW = mp_pose.RIGHT_ELBOW.value
-IDX_L_KNEE = mp_pose.LEFT_KNEE.value
-IDX_R_KNEE = mp_pose.RIGHT_KNEE.value
-IDX_L_ANKLE = mp_pose.LEFT_ANKLE.value
-IDX_R_ANKLE = mp_pose.RIGHT_ANKLE.value
+# MediaPipe body landmark indices (Hardcoded to avoid dependency)
+# See: https://developers.google.com/mediapipe/solutions/vision/pose_landmarker
+IDX_NOSE = 0
+IDX_L_SHOULDER = 11
+IDX_R_SHOULDER = 12
+IDX_L_ELBOW = 13
+IDX_R_ELBOW = 14
+IDX_L_WRIST = 15
+IDX_R_WRIST = 16
+IDX_L_HIP = 23
+IDX_R_HIP = 24
+IDX_L_KNEE = 25
+IDX_R_KNEE = 26
+IDX_L_ANKLE = 27
+IDX_R_ANKLE = 28
 
 
 # ---------------------------------------------------------------------------
@@ -366,6 +366,25 @@ class MetricsCalculator:
         # 10. EARLY EXTENSION - amount
         early_extension = self._compute_early_extension(address_frame, impact_frame)
         
+        # 11. SWING PATH INDEX - shallow vs over-the-top
+        # Detect handedness first
+        handedness = "Right"  # Default, could be made dynamic later
+        swing_path_index = self._compute_swing_path_index(
+            frames, 
+            phases.top_frame, 
+            phases.impact_frame,
+            handedness
+        )
+
+        # 12. HAND HEIGHT AT TOP (DTL)
+        hand_height_index = self._compute_hand_height(top_frame, handedness, use_hybrik)
+
+        # 13. HAND WIDTH AT TOP (DTL)
+        hand_width_index = self._compute_hand_width(top_frame, handedness, use_hybrik)
+
+        # 14. VERTICAL HEAD MOVEMENT (Refined)
+        head_vert = self._compute_vertical_head_movement(address_frame, top_frame, impact_frame, use_hybrik)
+        
         # Helper function to safely round values (handle None)
         def safe_round(value, decimals=1):
             if value is None:
@@ -391,6 +410,11 @@ class MetricsCalculator:
             knee_flex_right_address_deg=safe_round(knee_flex_right, 1) if knee_flex_right is not None else None,
             head_sway_range=safe_round(head_sway_range, 4) if head_sway_range is not None else None,
             early_extension_amount=safe_round(early_extension, 4) if early_extension is not None else None,
+            swing_path_index=safe_round(swing_path_index, 3) if swing_path_index is not None else None,
+            hand_height_at_top_index=safe_round(hand_height_index, 3) if hand_height_index is not None else None,
+            hand_width_at_top_index=safe_round(hand_width_index, 3) if hand_width_index is not None else None,
+            head_drop_cm=safe_round(head_vert.get("drop_cm"), 1),
+            head_rise_cm=safe_round(head_vert.get("rise_cm"), 1),
             # Backward compatibility
             shoulder_turn_top_deg=safe_round(abs(chest_turn_top), 1) if chest_turn_top is not None else None,
             hip_turn_top_deg=safe_round(abs(pelvis_turn_top), 1) if pelvis_turn_top is not None else None,
@@ -429,9 +453,9 @@ class MetricsCalculator:
         if addr_angle is not None and top_angle is not None:
             return _normalize_angle_diff(addr_angle, top_angle)
         
-        return 0.0
+        return None
     
-    def _compute_pelvis_turn(self, address_frame: Dict[str, Any], top_frame: Dict[str, Any], use_3d: bool) -> float:
+    def _compute_pelvis_turn(self, address_frame: Dict[str, Any], top_frame: Dict[str, Any], use_3d: bool) -> Optional[float]:
         """Compute pelvis (hip) turn from address to top."""
         if use_3d:
             addr_angle = _rotation_angle_3d(address_frame, IDX_L_HIP, IDX_R_HIP)
@@ -446,10 +470,10 @@ class MetricsCalculator:
         
         if addr_angle is not None and top_angle is not None:
             return _normalize_angle_diff(addr_angle, top_angle)
-        
-        return 0.0
+            
+        return None
     
-    def _compute_spine_angle(self, frame: Dict[str, Any], use_3d: bool) -> float:
+    def _compute_spine_angle(self, frame: Dict[str, Any], use_3d: bool) -> Optional[float]:
         """Compute spine forward bend angle."""
         if use_3d:
             ls = _get_xyz_from_frame(frame, IDX_L_SHOULDER)
@@ -461,15 +485,20 @@ class MetricsCalculator:
                 mid_sh = _midpoint_3d(ls, rs)
                 mid_hip = _midpoint_3d(lh, rh)
                 
-                # Spine vector (hip to shoulder)
+                # Spine vector (hips to shoulders)
                 spine_vec = (
                     mid_sh[0] - mid_hip[0],
                     mid_sh[1] - mid_hip[1],  # Negative = up in HybrIK
                     mid_sh[2] - mid_hip[2],
                 )
                 
-                # Vertical is (0, -1, 0) in HybrIK
+                # Vertical vector relative to pelvic tilt? 
+                # Simpler: Angle with global Y axis (vertical)
+                # In 3D (Y down), vertical is (0, -1, 0) or (0, 1, 0) depending on ref.
+                # Assuming Y is down, "up" is (0, -1, 0).
                 vertical = (0, -1, 0)
+                
+                # Angle
                 dot = spine_vec[0] * vertical[0] + spine_vec[1] * vertical[1] + spine_vec[2] * vertical[2]
                 spine_length = math.sqrt(spine_vec[0]**2 + spine_vec[1]**2 + spine_vec[2]**2)
                 
@@ -491,31 +520,31 @@ class MetricsCalculator:
             dy = mid_sh[1] - mid_hip[1]
             return math.degrees(math.atan2(abs(dx), -dy))
         
-        return 0.0
+        return None
     
-    def _compute_lead_arm(self, frame: Dict[str, Any], use_3d: bool) -> float:
+    def _compute_lead_arm(self, frame: Dict[str, Any], use_3d: bool) -> Optional[float]:
         """Compute lead arm angle (elbow angle, 180° = straight)."""
         shoulder = _get_xyz_from_frame(frame, IDX_L_SHOULDER) if use_3d else _get_xy_from_frame(frame, IDX_L_SHOULDER)
         elbow = _get_xyz_from_frame(frame, IDX_L_ELBOW) if use_3d else _get_xy_from_frame(frame, IDX_L_ELBOW)
         wrist = _get_xyz_from_frame(frame, IDX_L_WRIST) if use_3d else _get_xy_from_frame(frame, IDX_L_WRIST)
         
         if None in (shoulder, elbow, wrist):
-            return 0.0
+            return None
         
         return _angle_3d(shoulder, elbow, wrist)
     
-    def _compute_trail_elbow(self, frame: Dict[str, Any], use_3d: bool) -> float:
+    def _compute_trail_elbow(self, frame: Dict[str, Any], use_3d: bool) -> Optional[float]:
         """Compute trail elbow angle."""
         shoulder = _get_xyz_from_frame(frame, IDX_R_SHOULDER) if use_3d else _get_xy_from_frame(frame, IDX_R_SHOULDER)
         elbow = _get_xyz_from_frame(frame, IDX_R_ELBOW) if use_3d else _get_xy_from_frame(frame, IDX_R_ELBOW)
         wrist = _get_xyz_from_frame(frame, IDX_R_WRIST) if use_3d else _get_xy_from_frame(frame, IDX_R_WRIST)
         
         if None in (shoulder, elbow, wrist):
-            return 0.0
+            return None
         
         return _angle_3d(shoulder, elbow, wrist)
     
-    def _compute_knee_flex(self, frame: Dict[str, Any], use_3d: bool) -> Tuple[float, float]:
+    def _compute_knee_flex(self, frame: Dict[str, Any], use_3d: bool) -> Tuple[Optional[float], Optional[float]]:
         """Compute knee flex angles (left, right) at address."""
         l_hip = _get_xyz_from_frame(frame, IDX_L_HIP) if use_3d else _get_xy_from_frame(frame, IDX_L_HIP)
         l_knee = _get_xyz_from_frame(frame, IDX_L_KNEE) if use_3d else _get_xy_from_frame(frame, IDX_L_KNEE)
@@ -525,12 +554,12 @@ class MetricsCalculator:
         r_knee = _get_xyz_from_frame(frame, IDX_R_KNEE) if use_3d else _get_xy_from_frame(frame, IDX_R_KNEE)
         r_ankle = _get_xyz_from_frame(frame, IDX_R_ANKLE) if use_3d else _get_xy_from_frame(frame, IDX_R_ANKLE)
         
-        left_angle = _angle_3d(l_hip, l_knee, l_ankle) if None not in (l_hip, l_knee, l_ankle) else 0.0
-        right_angle = _angle_3d(r_hip, r_knee, r_ankle) if None not in (r_hip, r_knee, r_ankle) else 0.0
+        left_angle = _angle_3d(l_hip, l_knee, l_ankle) if None not in (l_hip, l_knee, l_ankle) else None
+        right_angle = _angle_3d(r_hip, r_knee, r_ankle) if None not in (r_hip, r_knee, r_ankle) else None
         
         return left_angle, right_angle
     
-    def _compute_head_sway_range(self, frames: List[Dict[str, Any]]) -> float:
+    def _compute_head_sway_range(self, frames: List[Dict[str, Any]]) -> Optional[float]:
         """Compute head sway range across entire swing."""
         xs = []
         for frame in frames:
@@ -539,12 +568,12 @@ class MetricsCalculator:
                 xs.append(nose[0])
         
         if len(xs) < 2:
-            return 0.0
+            return None
         
         x_arr = _smooth(np.array(xs))
         return float(np.nanmax(x_arr) - np.nanmin(x_arr))
     
-    def _compute_early_extension(self, address_frame: Dict[str, Any], impact_frame: Dict[str, Any]) -> float:
+    def _compute_early_extension(self, address_frame: Dict[str, Any], impact_frame: Dict[str, Any]) -> Optional[float]:
         """Compute early extension amount (hip movement toward ball)."""
         addr_lh = _get_xy_from_frame(address_frame, IDX_L_HIP)
         addr_rh = _get_xy_from_frame(address_frame, IDX_R_HIP)
@@ -552,7 +581,7 @@ class MetricsCalculator:
         imp_rh = _get_xy_from_frame(impact_frame, IDX_R_HIP)
         
         if None in (addr_lh, addr_rh, imp_lh, imp_rh):
-            return 0.0
+            return None
         
         addr_y = (addr_lh[1] + addr_rh[1]) / 2
         imp_y = (imp_lh[1] + imp_rh[1]) / 2
@@ -560,27 +589,229 @@ class MetricsCalculator:
         # Early extension = hips moving toward ball (Y decreasing)
         return addr_y - imp_y
     
+    def _compute_swing_path_index(
+        self, 
+        frames: List[Dict[str, Any]], 
+        top_frame_idx: int, 
+        impact_frame_idx: int,
+        handedness: str = "Right"
+    ) -> Optional[float]:
+        """
+        Compute swing path index to detect shallow vs over-the-top.
+        
+        Measures lateral (X-axis) movement of lead wrist at transition.
+        - Negative value = shallow (wrist moves inward toward body) ✓
+        - Positive value = over-the-top (wrist moves outward toward target) ✗
+        
+        Args:
+            frames: List of pose frames with 3D landmarks
+            top_frame_idx: Frame index of top of backswing
+            impact_frame_idx: Frame index of impact
+            handedness: "Right" or "Left" handed golfer
+            
+        Returns:
+            swing_path_index: Normalized lateral displacement (-1 to +1 typical range)
+        """
+        if not frames or top_frame_idx >= len(frames) or impact_frame_idx >= len(frames):
+            return None
+            
+        # Determine lead wrist index based on handedness
+        # For right-handed: lead arm is LEFT arm
+        # For left-handed: lead arm is RIGHT arm
+        lead_wrist_idx = IDX_L_WRIST if handedness == "Right" else IDX_R_WRIST
+        
+        # Get wrist position at top of backswing
+        top_frame = frames[top_frame_idx]
+        top_wrist = _get_xyz_from_frame(top_frame, lead_wrist_idx)
+        
+        if top_wrist is None:
+            return None
+            
+        # Calculate transition frame (20% into downswing)
+        downswing_frames = impact_frame_idx - top_frame_idx
+        if downswing_frames <= 2:
+            return None
+            
+        transition_offset = max(2, int(downswing_frames * 0.2))
+        transition_frame_idx = min(top_frame_idx + transition_offset, impact_frame_idx - 1)
+        
+        transition_frame = frames[transition_frame_idx]
+        transition_wrist = _get_xyz_from_frame(transition_frame, lead_wrist_idx)
+        
+        if transition_wrist is None:
+            return None
+            
+        # Calculate lateral displacement (X-axis movement)
+        # In DTL view: positive X = toward target, negative X = toward body
+        x_displacement = transition_wrist[0] - top_wrist[0]
+        
+        # For right-handed golfer in DTL view:
+        # - If wrist moves LEFT (negative X) at transition, that's shallow (good)
+        # - If wrist moves RIGHT (positive X) at transition, that's over-the-top (bad)
+        # 
+        # We want: negative = shallow (good), positive = over-the-top (bad)
+        # So for right-handed: return x_displacement directly
+        # For left-handed: mirror it
+        if handedness == "Left":
+            x_displacement = -x_displacement
+            
+        # Normalize by approximate body width for scale independence
+        # Get shoulder width as reference
+        l_shoulder = _get_xyz_from_frame(top_frame, IDX_L_SHOULDER)
+        r_shoulder = _get_xyz_from_frame(top_frame, IDX_R_SHOULDER)
+        
+        if l_shoulder is not None and r_shoulder is not None:
+            shoulder_width = abs(l_shoulder[0] - r_shoulder[0])
+            if shoulder_width > 0.01:
+                # Normalize: typical good shallow is about -0.3 to -0.5 of shoulder width
+                return x_displacement / shoulder_width
+        
+        # Fallback: return raw displacement (approximate normalization)
+        return x_displacement * 5  # Scale to similar range
+    
+    def _compute_hand_height(self, frame: Dict[str, Any], handedness: str, use_3d: bool) -> Optional[float]:
+        """
+        Compute normalized hand height at top.
+        Index > 0: Hands above shoulder (High)
+        Index < 0: Hands below shoulder (Low/Flat)
+        """
+        lead_wrist_idx = IDX_L_WRIST if handedness == "Right" else IDX_R_WRIST
+        lead_shoulder_idx = IDX_L_SHOULDER if handedness == "Right" else IDX_R_SHOULDER
+        
+        wrist = _get_xyz_from_frame(frame, lead_wrist_idx) if use_3d else _get_xy_from_frame(frame, lead_wrist_idx)
+        shoulder = _get_xyz_from_frame(frame, lead_shoulder_idx) if use_3d else _get_xy_from_frame(frame, lead_shoulder_idx)
+        
+        if not wrist or not shoulder:
+            return None
+            
+        # Y is down in both systems (usually), but verify coordinate system text
+        # HybrIK: NEGATIVE = up. MediaPipe: 0 = top.
+        # So "Above" shoulder means wrist.y < shoulder.y
+        # We want Positive index for High (Above).
+        # Diff = shoulder.y - wrist.y
+        # If wrist(0.2) < shoulder(0.5) -> Diff = 0.3 (Positive/High)
+        diff = shoulder[1] - wrist[1]
+        
+        # Normalize by torso length (roughly shoulder to hip)
+        l_sh = _get_xyz_from_frame(frame, IDX_L_SHOULDER) if use_3d else _get_xy_from_frame(frame, IDX_L_SHOULDER)
+        l_hip = _get_xyz_from_frame(frame, IDX_L_HIP) if use_3d else _get_xy_from_frame(frame, IDX_L_HIP)
+        
+        if l_sh and l_hip:
+            torso_len = abs(l_sh[1] - l_hip[1])
+            if torso_len > 0.01:
+                return diff / torso_len
+                
+        return diff * 2.0 # Fallback scale
+
+    def _compute_hand_width(self, frame: Dict[str, Any], handedness: str, use_3d: bool) -> Optional[float]:
+        """
+        Compute normalized hand width (distance from chest) at top.
+        Higher index = Wider/More disconnected
+        """
+        lead_wrist_idx = IDX_L_WRIST if handedness == "Right" else IDX_R_WRIST
+        
+        wrist = _get_xyz_from_frame(frame, lead_wrist_idx) if use_3d else _get_xy_from_frame(frame, lead_wrist_idx)
+        l_sh = _get_xyz_from_frame(frame, IDX_L_SHOULDER) if use_3d else _get_xy_from_frame(frame, IDX_L_SHOULDER)
+        r_sh = _get_xyz_from_frame(frame, IDX_R_SHOULDER) if use_3d else _get_xy_from_frame(frame, IDX_R_SHOULDER)
+        
+        if not wrist or not l_sh or not r_sh:
+            return None
+            
+        # Chest Midpoint
+        if len(l_sh) == 3:
+            chest = ((l_sh[0]+r_sh[0])/2, (l_sh[1]+r_sh[1])/2, (l_sh[2]+r_sh[2])/2)
+            # Distance 3D
+            dist = math.sqrt((wrist[0]-chest[0])**2 + (wrist[1]-chest[1])**2 + (wrist[2]-chest[2])**2)
+        else:
+            chest = ((l_sh[0]+r_sh[0])/2, (l_sh[1]+r_sh[1])/2)
+            # Distance 2D
+            dist = math.sqrt((wrist[0]-chest[0])**2 + (wrist[1]-chest[1])**2)
+            
+        # Normalize by shoulder width
+        if len(l_sh) == 3:
+            sh_width = math.sqrt((l_sh[0]-r_sh[0])**2 + (l_sh[1]-r_sh[1])**2 + (l_sh[2]-r_sh[2])**2)
+        else:
+            sh_width = math.sqrt((l_sh[0]-r_sh[0])**2 + (l_sh[1]-r_sh[1])**2)
+            
+        if sh_width > 0.01:
+            return dist / sh_width
+            
+        if l_hip and r_hip and l_sh and r_sh:
+             # Calculate torso width/depth to normalize?
+             # For now, approximate based on shoulder width
+             shoulder_width = abs(l_sh[0] - r_sh[0])
+             if shoulder_width > 0.01:
+                 return diff / shoulder_width
+                 
+        return diff * 2.5 # Fallback scale
+
+    def _compute_vertical_head_movement(
+        self, 
+        address_frame: Dict[str, Any], 
+        top_frame: Dict[str, Any], 
+        impact_frame: Dict[str, Any],
+        use_3d: bool
+    ) -> Dict[str, float]:
+        """
+        Compute vertical head movement in cm (approx).
+        
+        - Drop: Distance head moves DOWN from Address to Top.
+        - Rise: Distance head moves UP from Top to Impact.
+        
+        Returns:
+            Dict with "drop_cm" and "rise_cm".
+        """
+        addr_nose = _get_xyz_from_frame(address_frame, IDX_NOSE) if use_3d else _get_xy_from_frame(address_frame, IDX_NOSE)
+        top_nose = _get_xyz_from_frame(top_frame, IDX_NOSE) if use_3d else _get_xy_from_frame(top_frame, IDX_NOSE)
+        imp_nose = _get_xyz_from_frame(impact_frame, IDX_NOSE) if use_3d else _get_xy_from_frame(impact_frame, IDX_NOSE)
+        
+        if not addr_nose or not top_nose or not imp_nose:
+            return {"drop_cm": 0.0, "rise_cm": 0.0}
+            
+        # Determine scale factor (pixels/units to cm)
+        # Use Torso Length = approx 50cm
+        scale_cm_per_unit = 100.0 # Default fallback
+        
+        l_sh = _get_xyz_from_frame(address_frame, IDX_L_SHOULDER) if use_3d else _get_xy_from_frame(address_frame, IDX_L_SHOULDER)
+        l_hip = _get_xyz_from_frame(address_frame, IDX_L_HIP) if use_3d else _get_xy_from_frame(address_frame, IDX_L_HIP)
+        
+        if l_sh and l_hip:
+            torso_len_units = abs(l_sh[1] - l_hip[1]) # Y diff
+            if torso_len_units > 0.01:
+                # Average torso length is ~50cm
+                scale_cm_per_unit = 50.0 / torso_len_units
+                
+        # Calculate Y differences. 
+        # CAUTION: Coordinate systems vary.
+        # MediaPipe: Y=0 is TOP. Down = Positive Y.
+        # So Lower Head = Higher Y value.
+        # HybrIK: Y usually Down in image space too? 
+        # Assuming Y increases DOWNWARDS (standard image coords).
+        
+        # Drop (Address -> Top): Head goes DOWN. Y increases.
+        # Drop = Top.y - Address.y
+        drop_units = top_nose[1] - addr_nose[1]
+        
+        # Rise (Top -> Impact): Head goes UP. Y decreases.
+        # Rise = Top.y - Impact.y (Positive if Impact is higher/smaller Y than Top)
+        # Or Rise = (Max Y during swing) - Impact Y? 
+        # Let's stick to Top -> Impact delta.
+        # If Impact head is HIGHER than Top head: Top.y > Impact.y
+        rise_units = top_nose[1] - imp_nose[1]
+        
+        drop_cm = drop_units * scale_cm_per_unit
+        rise_cm = rise_units * scale_cm_per_unit
+        
+        return {
+            "drop_cm": drop_cm,
+            "rise_cm": rise_cm
+        }
+
+    
     def _empty_metrics(self) -> SwingMetrics:
-        """Return empty metrics with all zeros."""
+        """Return empty metrics with all None (defaults)."""
         return SwingMetrics(
-            tempo_ratio=0.0,
-            backswing_duration_ms=0.0,
-            downswing_duration_ms=0.0,
-            chest_turn_top_deg=0.0,
-            pelvis_turn_top_deg=0.0,
-            x_factor_top_deg=0.0,
-            spine_angle_address_deg=0.0,
-            spine_angle_impact_deg=0.0,
-            lead_arm_address_deg=0.0,
-            lead_arm_top_deg=0.0,
-            lead_arm_impact_deg=0.0,
-            trail_elbow_address_deg=0.0,
-            trail_elbow_top_deg=0.0,
-            trail_elbow_impact_deg=0.0,
-            knee_flex_left_address_deg=0.0,
-            knee_flex_right_address_deg=0.0,
-            head_sway_range=0.0,
-            early_extension_amount=0.0,
+            # All fields default to None in schema
         )
 
     def detect_handedness(self, poses: List[FramePose], phases: SwingPhases) -> str:
@@ -618,11 +849,11 @@ class MetricsCalculator:
 
 def extract_key_frames(poses: List[FramePose], phases: SwingPhases) -> List[Dict[str, Any]]:
     """
-    Extract key frames (address, top, impact) with landmarks for skeleton visualization.
+    Extract key frames (address, top, impact, finish) with landmarks for skeleton visualization.
     
     Args:
         poses: List of FramePose objects
-        phases: SwingPhases with address, top, impact frame indices
+        phases: SwingPhases with address, top, impact, finish frame indices
         
     Returns:
         List of key frame dicts with frame_index, timestamp_sec, phase, and landmarks
@@ -633,6 +864,7 @@ def extract_key_frames(poses: List[FramePose], phases: SwingPhases) -> List[Dict
         ("address", phases.address_frame),
         ("top", phases.top_frame),
         ("impact", phases.impact_frame),
+        ("finish", phases.finish_frame),
     ]:
         if 0 <= frame_idx < len(poses):
             pose = poses[frame_idx]

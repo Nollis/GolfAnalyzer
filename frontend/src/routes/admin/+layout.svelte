@@ -1,11 +1,23 @@
 <script lang="ts">
-    import { onMount } from "svelte";
     import { goto } from "$app/navigation";
-    import { user, isAuthenticated } from "$lib/stores/auth";
+    import { page } from "$app/stores";
+    import { onMount } from "svelte";
+    import {
+        initializeAuth,
+        isAuthenticated,
+        user,
+        waitForAuthReady,
+    } from "$lib/stores/auth";
 
-    onMount(() => {
+    onMount(async () => {
+        await initializeAuth();
+        await waitForAuthReady();
+
         if (!$isAuthenticated) {
-            goto("/login");
+            const redirectParam = encodeURIComponent(
+                $page.url.pathname + $page.url.search,
+            );
+            goto(`/login?redirectTo=${redirectParam}`);
             return;
         }
 

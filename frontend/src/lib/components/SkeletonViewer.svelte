@@ -15,12 +15,49 @@
     smpl_joints_2d?: Landmark[] | number[][]; // SMPL joints if available
     smpl_joints_2d_orig?: Landmark[] | number[][]; // Fallback SMPL
     smpl_bbox?: number[]; // [x1, y1, x2, y2]
+    mhr_joints_2d?: number[][]; // MHR-70 2D joints from SAM-3D
+    mhr_joints_3d?: number[][]; // MHR-70 3D joints from SAM-3D
   }
 
   export let keyFrame: KeyFrame;
   export let width: number = 400;
   export let height: number = 600;
   export let imageUrl: string | null = null;
+
+  // MHR-70 connections (from overlay_mhr_skeleton.py - verified working)
+  // MHR indices: 0-4=face, 5=L_shoulder, 6=R_shoulder, 7=L_elbow, 8=R_elbow,
+  // 9=L_hip, 10=R_hip, 11=L_knee, 12=R_knee, 13=L_ankle, 14=R_ankle,
+  // 41=R_wrist, 62=L_wrist
+  const MHR_CONNECTIONS = [
+    // Left leg
+    [13, 11],
+    [11, 9],
+    // Right leg
+    [14, 12],
+    [12, 10],
+    // Hip line
+    [9, 10],
+    // Torso
+    [5, 9],
+    [6, 10],
+    // Shoulder line
+    [5, 6],
+    // Left arm
+    [5, 7],
+    [7, 62],
+    // Right arm
+    [6, 8],
+    [8, 41],
+    // Face/head
+    [1, 2],
+    [0, 1],
+    [0, 2],
+    [1, 3],
+    [2, 4],
+    // Head to shoulders
+    [3, 5],
+    [4, 6],
+  ];
 
   // SMPL connections (24 joints)
   const SMPL_CONNECTIONS = [
@@ -47,6 +84,47 @@
     [19, 21], // Elbows -> Wrists
     [20, 22],
     [21, 23], // Wrists -> Hands
+  ];
+
+  // MediaPipe Pose connections (33 landmarks)
+  const MEDIAPIPE_CONNECTIONS = [
+    [11, 13],
+    [13, 15],
+    [12, 14],
+    [14, 16],
+    [11, 12],
+    [23, 24],
+    [11, 23],
+    [12, 24],
+    [23, 25],
+    [24, 26],
+    [25, 27],
+    [26, 28],
+    [27, 29],
+    [28, 30],
+    [5, 6],
+    [6, 8],
+    [5, 7],
+  ];
+
+  // COCO/YOLOv8 connections (17 keypoints)
+  const COCO_CONNECTIONS = [
+    [0, 1],
+    [0, 2],
+    [1, 3],
+    [2, 4],
+    [5, 6],
+    [5, 7],
+    [7, 9],
+    [6, 8],
+    [8, 10],
+    [5, 11],
+    [6, 12],
+    [11, 12],
+    [11, 13],
+    [13, 15],
+    [12, 14],
+    [14, 16],
   ];
 
   function drawSkeleton(ctx: CanvasRenderingContext2D, img?: HTMLImageElement) {
@@ -79,13 +157,19 @@
     ctx.lineJoin = "round";
     ctx.fillStyle = "#00FFFF";
 
-    // Prioritize SMPL joints if available
-    // We prioritize smpl_joints_2d because smpl_joints_2d_orig seems to be corrupted (white ball).
-    // Also, PoseImageSkeletonOverlay uses smpl_joints_2d and works fine.
+    // Prioritize data sources: MHR > SMPL > MediaPipe
     let landmarks = null;
     let isGlobalCoords = false;
+    let isMHR = false;
+    let connections = SMPL_CONNECTIONS;
 
-    if (keyFrame.smpl_joints_2d && keyFrame.smpl_joints_2d.length > 0) {
+    // First try MHR joints (most accurate from SAM-3D)
+    if (keyFrame.mhr_joints_2d && keyFrame.mhr_joints_2d.length > 0) {
+      landmarks = keyFrame.mhr_joints_2d;
+      isGlobalCoords = true; // MHR outputs pixel coordinates
+      isMHR = true;
+      connections = MHR_CONNECTIONS;
+    } else if (keyFrame.smpl_joints_2d && keyFrame.smpl_joints_2d.length > 0) {
       landmarks = keyFrame.smpl_joints_2d;
     } else if (
       keyFrame.smpl_joints_2d_orig &&
@@ -93,6 +177,17 @@
     ) {
       landmarks = keyFrame.smpl_joints_2d_orig;
       isGlobalCoords = true;
+    } else if (keyFrame.landmarks && keyFrame.landmarks.length > 0) {
+      // Fallback to normalized/body landmarks (YOLO/MediaPipe)
+      landmarks = keyFrame.landmarks;
+      // Choose sensible connections based on landmark count
+      if (landmarks.length >= 33) {
+        connections = MEDIAPIPE_CONNECTIONS;
+      } else if (landmarks.length >= 17) {
+        connections = COCO_CONNECTIONS;
+      } else {
+        connections = MEDIAPIPE_CONNECTIONS;
+      }
     }
 
     if (!landmarks || landmarks.length === 0) {
@@ -215,10 +310,9 @@
     }
 
     // Draw connections (bones)
-    // Always use SMPL connections as we prioritize SMPL data and even if it has extra joints (29 vs 24),
-    // the first 24 are standard SMPL.
+    // Use dynamic connections based on data source (MHR or SMPL)
     let drawnConnections = 0;
-    SMPL_CONNECTIONS.forEach(([start, end]) => {
+    connections.forEach(([start, end]) => {
       if (start < landmarks.length && end < landmarks.length) {
         const startLandmark = landmarks[start] as any;
         const endLandmark = landmarks[end] as any;
@@ -317,30 +411,40 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.5rem;
-    padding: 1rem;
-    border: 1px solid #e0e0e0;
-    border-radius: 8px;
-    background: #fff;
+    gap: 0.4rem;
+    padding: 0.5rem 0;
   }
 
   .phase-label {
     margin: 0;
-    font-size: 1rem;
+    font-size: 0.95rem;
     font-weight: 600;
-    color: #333;
+    color: #475569; /* slate-600 */
     text-transform: capitalize;
+  }
+  :global(.dark) .phase-label {
+    color: #e2e8f0; /* slate-200 */
   }
 
   .skeleton-canvas {
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    background: #f9f9f9;
+    border: 1px solid #e2e8f0; /* slate-200 */
+    border-radius: 16px;
+    background: #f8fafc; /* slate-50 */
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+  }
+  :global(.dark) .skeleton-canvas {
+    border: none;
+    background: #0f172a; /* slate-950 */
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
   }
 
   .frame-info {
     margin: 0;
-    font-size: 0.85rem;
-    color: #666;
+    font-size: 0.82rem;
+    color: #64748b; /* slate-500 */
+  }
+  :global(.dark) .frame-info {
+    color: #94a3b8; /* slate-400 */
   }
 </style>

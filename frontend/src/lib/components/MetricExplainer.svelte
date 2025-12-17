@@ -20,6 +20,16 @@
             "Time taken from the top of the swing to impact.",
         spine_tilt_address_deg: "The angle of your spine at address.",
         spine_tilt_impact_deg: "The angle of your spine at impact.",
+        finish_balance:
+            "How well you transfer weight to your lead side at finish (1.0 = full transfer).",
+        pelvis_sway_top_cm:
+            "Lateral movement of hips away from target during backswing.",
+        pelvis_sway_impact_cm:
+            "Lateral movement of hips toward target at impact.",
+        spine_angle_finish_deg:
+            "Extension of the spine at the finish position.",
+        swing_plane_deviation_top_deg:
+            "How much your swing plane deviates from the ideal address plane.",
     };
 
     $: explanation = explanations[metricName] || "No explanation available.";
@@ -56,36 +66,40 @@
     {#if showTooltip}
         <div
             role="tooltip"
-            class="absolute z-10 w-64 p-3 mt-1 -ml-32 text-sm text-white bg-gray-800 rounded shadow-lg bottom-full left-1/2 mb-2"
+            class="absolute z-10 w-64 p-3 mt-1 -ml-32 text-sm text-gray-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded shadow-md dark:shadow-xl bottom-full left-1/2 mb-2 transition-colors duration-300"
             on:mouseenter={() => (showTooltip = true)}
             on:mouseleave={() => (showTooltip = false)}
         >
             <p class="mb-2">{explanation}</p>
             {#if hasDiagram}
                 <button
-                    class="text-xs text-green-400 hover:text-green-300 underline focus:outline-none"
+                    class="text-xs text-green-600 dark:text-emerald-400 hover:text-green-700 dark:hover:text-emerald-300 underline focus:outline-none"
                     on:click={() => (showModal = true)}
                 >
                     Visualize
                 </button>
             {/if}
             <div
-                class="absolute bottom-0 w-2 h-2 -mb-1 transform -translate-x-1/2 bg-gray-800 rotate-45 left-1/2"
+                class="absolute bottom-0 w-2 h-2 -mb-1 transform -translate-x-1/2 bg-white dark:bg-slate-900 border-b border-r border-gray-200 dark:border-slate-700 rotate-45 left-1/2 transition-colors duration-300"
             ></div>
         </div>
     {/if}
 
     {#if showModal}
         <div
-            class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 backdrop-blur-sm"
         >
-            <div class="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
+            <div
+                class="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-lg shadow-2xl p-6 max-w-sm w-full mx-4 transition-colors duration-300"
+            >
                 <div class="flex justify-between items-center mb-4">
-                    <h3 class="text-lg font-semibold text-gray-900">
+                    <h3
+                        class="text-lg font-semibold text-gray-900 dark:text-slate-50"
+                    >
                         {displayName}
                     </h3>
                     <button
-                        class="text-gray-500 hover:text-gray-700"
+                        class="text-gray-500 hover:text-gray-700 dark:text-slate-500 dark:hover:text-slate-300 transition-colors"
                         on:click={() => (showModal = false)}
                     >
                         <svg
@@ -106,13 +120,13 @@
                 </div>
 
                 <div class="mb-4">
-                    <p class="text-gray-600 mb-4">{explanation}</p>
+                    <p class="text-slate-300 mb-4">{explanation}</p>
                     <MetricDiagram {metricName} />
                 </div>
 
                 <div class="text-right">
                     <button
-                        class="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 transition-colors"
+                        class="px-4 py-2 bg-slate-800 text-slate-200 rounded hover:bg-slate-700 transition-colors"
                         on:click={() => (showModal = false)}
                     >
                         Close

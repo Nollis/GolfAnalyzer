@@ -49,12 +49,6 @@ async def startup_event():
     start_worker()
     logger.info("✅ Background worker started")
     
-    # Load address pose preset
-    from pose.presets.address_blend import load_address_pose, ADDRESS_POSE
-    load_address_pose()
-    if ADDRESS_POSE:
-        logger.info("✅ Address pose preset loaded")
-    
     logger.info("🎯 API ready to accept requests!")
 
 

@@ -151,7 +151,8 @@ GolfAnalyzer/
 │   ├── schemas.py         # Pydantic schemas
 │   └── services/          # Business logic
 ├── pose/                  # Pose estimation and analysis
-│   ├── mediapipe_wrapper.py
+│   ├── legacy_mediapipe.py
+│   ├── types.py
 │   ├── swing_detection.py
 │   └── metrics.py
 ├── reference/             # Reference profiles and scoring

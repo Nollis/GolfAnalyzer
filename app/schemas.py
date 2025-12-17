@@ -8,6 +8,8 @@ class UserBase(BaseModel):
     handicap: Optional[float] = None
     skill_level: Optional[str] = "Beginner"
     handedness: Optional[str] = None
+    height_cm: Optional[float] = None
+    age: Optional[int] = None
 
 class UserCreate(UserBase):
     password: str
@@ -42,9 +44,9 @@ class SwingPhases(BaseModel):
 
 class SwingMetrics(BaseModel):
     # Core 10 metrics (HybrIK-based)
-    tempo_ratio: float
-    backswing_duration_ms: float
-    downswing_duration_ms: float
+    tempo_ratio: Optional[float] = None
+    backswing_duration_ms: Optional[float] = None
+    downswing_duration_ms: Optional[float] = None
     
     # Chest Turn (renamed from shoulder_turn for clarity)
     chest_turn_top_deg: Optional[float] = None
@@ -79,6 +81,43 @@ class SwingMetrics(BaseModel):
     # Early Extension (hip movement toward ball)
     early_extension_amount: Optional[float] = None
     
+    # Swing Path (negative = shallow/inside, positive = over-the-top/outside)
+    swing_path_index: Optional[float] = None
+
+    # Hand Position (DTL)
+    hand_height_at_top_index: Optional[float] = None
+    hand_width_at_top_index: Optional[float] = None
+    head_drop_cm: Optional[float] = None
+    head_rise_cm: Optional[float] = None
+    
+    # Extended MHR metrics (finish, sway, plane)
+    finish_balance: Optional[float] = None
+    chest_turn_finish_deg: Optional[float] = None
+    pelvis_turn_finish_deg: Optional[float] = None
+    spine_angle_top_deg: Optional[float] = None
+    spine_angle_finish_deg: Optional[float] = None
+    extension_from_address_deg: Optional[float] = None
+    head_rise_top_to_finish_cm: Optional[float] = None
+    head_lateral_shift_address_to_finish_cm: Optional[float] = None
+    hand_height_finish_norm: Optional[float] = None
+    hand_depth_finish_norm: Optional[float] = None
+    hand_height_finish_label: Optional[str] = None
+    hand_depth_finish_label: Optional[str] = None
+    pelvis_sway_top_cm: Optional[float] = None
+    pelvis_sway_impact_cm: Optional[float] = None
+    pelvis_sway_finish_cm: Optional[float] = None
+    pelvis_sway_range_cm: Optional[float] = None
+    shoulder_sway_top_cm: Optional[float] = None
+    shoulder_sway_impact_cm: Optional[float] = None
+    shoulder_sway_finish_cm: Optional[float] = None
+    shoulder_sway_range_cm: Optional[float] = None
+    swing_plane_top_deg: Optional[float] = None
+    swing_plane_impact_deg: Optional[float] = None
+    swing_plane_deviation_top_deg: Optional[float] = None
+    swing_plane_deviation_impact_deg: Optional[float] = None
+    swing_plane_shift_top_to_impact_deg: Optional[float] = None
+    arm_above_plane_at_top: Optional[bool] = None
+    
     # Backward compatibility fields (deprecated, kept for old sessions)
     shoulder_turn_top_deg: Optional[float] = None
     hip_turn_top_deg: Optional[float] = None
@@ -95,21 +134,41 @@ class SwingMetrics(BaseModel):
 class MetricScore(BaseModel):
     value: float
     score: str # "green", "yellow", "red"
+class MetricScore(BaseModel):
+    value: float
+    score: str # "green", "yellow", "red"
     target_min: Optional[float] = None
     target_max: Optional[float] = None
+    weight: float = 1.0
 
 class SwingScores(BaseModel):
     overall_score: int
     metric_scores: Dict[str, MetricScore]
 
-class Drill(BaseModel):
+# --- Drill Schemas ---
+class DrillBase(BaseModel):
     title: str
     description: str
+    category: str
+    difficulty: str = "Beginner"
+    video_url: Optional[str] = None
+    target_metric: Optional[str] = None
+
+class DrillCreate(DrillBase):
+    pass
+
+class DrillResponse(DrillBase):
+    id: str
+
+    class Config:
+        from_attributes = True
+
 
 class SwingFeedback(BaseModel):
     summary: str
     priority_issues: List[str]
-    drills: List[Drill]
+    drills: List[DrillResponse]
+    phase_feedback: Optional[Dict[str, str]] = {}
 
 class AnalysisResponse(BaseModel):
     session_id: Optional[str] = None
@@ -157,21 +216,4 @@ class ComparisonResponse(BaseModel):
     session_1: AnalysisResponse
     session_2: AnalysisResponse
     metrics: List[MetricDiff]
-
-class DrillBase(BaseModel):
-    title: str
-    description: str
-    category: str
-    difficulty: str = "Beginner"
-    video_url: Optional[str] = None
-    target_metric: Optional[str] = None
-
-class DrillCreate(DrillBase):
-    pass
-
-class DrillResponse(DrillBase):
-    id: str
-
-    class Config:
-        from_attributes = True
 

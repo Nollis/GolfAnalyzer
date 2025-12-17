@@ -51,6 +51,40 @@
     ];
 
     let showPro = true;
+    let activeTab = 0;
+    let mainCanvas: HTMLCanvasElement;
+
+    // External control
+    export let activePhaseName: string | null = null;
+    export let hideTabs: boolean = false;
+
+    // Sync external phase name to internal tab index
+    $: if (activePhaseName) {
+        const idx = phasesList.findIndex(
+            (p) => p.name.toLowerCase() === activePhaseName?.toLowerCase(),
+        );
+        if (idx !== -1 && idx !== activeTab) {
+            setActiveTab(idx);
+        }
+    }
+
+    function setActiveTab(idx: number) {
+        activeTab = idx;
+        // Redraw canvas for new phase after DOM update
+        setTimeout(() => {
+            if (
+                mainCanvas &&
+                poses.length > 0 &&
+                phasesList &&
+                phasesList[activeTab]
+            ) {
+                const phase = phasesList[activeTab];
+                if (phase) {
+                    drawPhaseLarge(mainCanvas, phase.frame, phase.name);
+                }
+            }
+        }, 0);
+    }
 
     // Hardcoded "Pro" reference poses (Face On view approximation)
     const PRO_POSES: Record<string, { landmarks: { x: number; y: number }[] }> =
@@ -276,6 +310,114 @@
         ctx.setLineDash([]);
     }
 
+    // Draw larger canvas for tabbed view
+    function drawPhaseLarge(
+        canvas: HTMLCanvasElement,
+        phaseFrame: number,
+        phaseName: string,
+    ) {
+        if (!poses.length) return;
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        const pose =
+            poses.find((p) => p.frame_index === phaseFrame) || poses[0];
+        if (!pose || !pose.landmarks) return;
+
+        const width = 500;
+        const height = 600;
+        canvas.width = width;
+        canvas.height = height;
+
+        ctx.clearRect(0, 0, width, height);
+
+        // Calculate Auto-Zoom Transform
+        const bbox = getBoundingBox(pose.landmarks);
+        const padding = 0.15;
+        const scaleX = width / (bbox.width * (1 + padding * 2));
+        const scaleY = height / (bbox.height * (1 + padding * 2));
+        const scale = Math.min(scaleX, scaleY);
+
+        const transform = {
+            minX: bbox.minX - bbox.width * padding,
+            minY: bbox.minY - bbox.height * padding,
+            scale: scale,
+            paddingX: (width - bbox.width * scale) / 2,
+            paddingY: (height - bbox.height * scale) / 2,
+        };
+
+        // Draw Reference Guidelines
+        ctx.strokeStyle = "#F3F4F6";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(width / 2, 0);
+        ctx.lineTo(width / 2, height);
+        ctx.moveTo(0, height * 0.9);
+        ctx.lineTo(width, height * 0.9);
+        ctx.stroke();
+
+        // Draw Pro Skeleton (Ghost)
+        if (showPro && PRO_POSES[phaseName]) {
+            const proLandmarks = PRO_POSES[phaseName].landmarks;
+            const proBbox = {
+                minX: Math.min(...proLandmarks.map((l) => l.x)),
+                maxX: Math.max(...proLandmarks.map((l) => l.x)),
+                minY: Math.min(...proLandmarks.map((l) => l.y)),
+                maxY: Math.max(...proLandmarks.map((l) => l.y)),
+                width: 0,
+                height: 0,
+            };
+            proBbox.width = proBbox.maxX - proBbox.minX;
+            proBbox.height = proBbox.maxY - proBbox.minY;
+
+            const proScaleX = width / (proBbox.width * (1 + padding * 2));
+            const proScaleY = height / (proBbox.height * (1 + padding * 2));
+            const proScale = Math.min(proScaleX, proScaleY);
+
+            const proTransform = {
+                minX: proBbox.minX - proBbox.width * padding,
+                minY: proBbox.minY - proBbox.height * padding,
+                scale: proScale,
+                paddingX: (width - proBbox.width * proScale) / 2,
+                paddingY: (height - proBbox.height * proScale) / 2,
+            };
+
+            drawSkeleton(
+                ctx,
+                proLandmarks,
+                "#D1D5DB",
+                width,
+                height,
+                proTransform,
+                true,
+            );
+        }
+
+        // Draw User Skeleton
+        drawSkeleton(
+            ctx,
+            pose.landmarks,
+            "#10B981",
+            width,
+            height,
+            transform,
+            false,
+        );
+    }
+
+    // Initial draw and redraw when active tab changes
+    $: if (mainCanvas && poses.length > 0) {
+        const phase = phasesList[activeTab];
+        drawPhaseLarge(mainCanvas, phase.frame, phase.name);
+    }
+
+    // Re-draw when pro toggle changes
+    $: if (showPro !== undefined && poses.length && mainCanvas) {
+        const phase = phasesList[activeTab];
+        drawPhaseLarge(mainCanvas, phase.frame, phase.name);
+    }
+
     function drawPhase(
         canvas: HTMLCanvasElement,
         phaseFrame: number,
@@ -388,66 +530,158 @@
     }
 </script>
 
-<div class="mb-6 flex justify-end">
+<!-- Tab Navigation -->
+<div class="mb-6 flex items-center justify-between">
+    {#if !hideTabs}
+        <div
+            class="flex space-x-1 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-lg p-1 transition-colors duration-300"
+        >
+            {#each phasesList as phase, idx}
+                <button
+                    class="px-4 py-2 rounded-md text-sm font-medium transition-all duration-200
+                       {activeTab === idx
+                        ? 'bg-green-600 dark:bg-emerald-600 text-white shadow-sm'
+                        : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800'}"
+                    on:click={() => setActiveTab(idx)}
+                >
+                    {phase.name}
+                </button>
+            {/each}
+        </div>
+    {:else}
+        <div></div>
+    {/if}
+
     <label class="flex items-center cursor-pointer">
         <div class="relative">
             <input type="checkbox" class="sr-only" bind:checked={showPro} />
-            <div class="block bg-gray-200 w-10 h-6 rounded-full"></div>
             <div
-                class="dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition {showPro
-                    ? 'transform translate-x-4 bg-green-500'
+                class="block bg-gray-200 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 w-10 h-6 rounded-full transition-colors duration-300"
+            ></div>
+            <div
+                class="dot absolute left-1 top-1 bg-white dark:bg-slate-500 w-4 h-4 rounded-full transition shadow-sm {showPro
+                    ? 'transform translate-x-4 bg-green-500 dark:bg-emerald-400'
                     : ''}"
             ></div>
         </div>
-        <div class="ml-3 text-gray-700 font-medium">
-            Pro Comparison <span class="text-xs text-gray-500">(Ghost)</span>
+        <div class="ml-3 text-gray-700 dark:text-slate-300 font-medium">
+            Pro Comparison <span
+                class="text-xs text-gray-500 dark:text-slate-500">(Ghost)</span
+            >
         </div>
     </label>
 </div>
 
-<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-    {#each phasesList as phase}
+<!-- Active Phase Display -->
+{#if poses.length > 0}
+    {@const currentPhase = phasesList[activeTab]}
+    <div
+        class="bg-white dark:bg-slate-900 rounded-xl shadow-md dark:shadow-xl overflow-hidden border border-gray-200 dark:border-slate-800 transition-colors duration-300"
+    >
+        <!-- Phase Header -->
         <div
-            class="bg-white rounded-lg shadow-md overflow-hidden border border-gray-100"
+            class="bg-gray-50 dark:bg-gradient-to-r dark:from-slate-900 dark:to-slate-800 p-4 border-b border-gray-200 dark:border-slate-800"
         >
-            <div
-                class="bg-gray-50 p-3 border-b border-gray-100 flex justify-between items-center"
-            >
+            <div class="flex justify-between items-center">
                 <div>
-                    <h3 class="font-bold text-gray-900">{phase.name}</h3>
-                    <p class="text-gray-500 text-xs">{phase.description}</p>
+                    <h3
+                        class="text-xl font-bold text-gray-900 dark:text-slate-50"
+                    >
+                        {currentPhase.name}
+                    </h3>
+                    <p class="text-gray-500 dark:text-slate-400 text-sm">
+                        {currentPhase.description}
+                    </p>
                 </div>
-                <span class="text-xs font-mono text-gray-400"
-                    >#{phase.frame}</span
+                <span
+                    class="text-sm font-mono text-green-600 dark:text-emerald-400 bg-white dark:bg-slate-950 border border-gray-200 dark:border-slate-800 px-3 py-1 rounded-full shadow-sm"
                 >
-            </div>
-
-            <div class="p-4 relative">
-                <div
-                    class="bg-white rounded-lg flex items-center justify-center border border-gray-100"
-                    style="height: 350px;"
-                >
-                    {#if poses.length > 0}
-                        <canvas
-                            id={`canvas-${phase.name}`}
-                            use:initCanvas={phase}
-                            class="max-w-full"
-                        ></canvas>
-                    {:else}
-                        <div class="text-gray-400 text-sm">No data</div>
-                    {/if}
-                </div>
+                    Frame #{currentPhase.frame}
+                </span>
             </div>
         </div>
-    {/each}
-</div>
 
-{#if poses.length === 0}
+        <!-- Canvas Container -->
+        <div class="p-6 flex justify-center bg-gray-100 dark:bg-slate-950/50">
+            <div
+                class="bg-white dark:bg-slate-950 rounded-lg flex items-center justify-center border border-gray-200 dark:border-slate-800 shadow-inner"
+                style="width: 500px; height: 600px;"
+            >
+                <canvas
+                    id="canvas-main"
+                    bind:this={mainCanvas}
+                    class="max-w-full"
+                ></canvas>
+            </div>
+        </div>
+
+        <!-- Phase Navigation Arrows -->
+        <div
+            class="flex justify-between items-center p-4 bg-gray-50 dark:bg-slate-900 border-t border-gray-200 dark:border-slate-800 transition-colors duration-300"
+        >
+            <button
+                class="flex items-center px-4 py-2 text-sm font-medium text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={activeTab === 0}
+                on:click={() => setActiveTab(activeTab - 1)}
+            >
+                <svg
+                    class="w-5 h-5 mr-1"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                >
+                    <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M15 19l-7-7 7-7"
+                    />
+                </svg>
+                {activeTab > 0 ? phasesList[activeTab - 1].name : ""}
+            </button>
+
+            <div class="flex space-x-2">
+                {#each phasesList as _, idx}
+                    <button
+                        class="w-2 h-2 rounded-full transition-all {activeTab ===
+                        idx
+                            ? 'bg-green-500 dark:bg-emerald-500 w-4'
+                            : 'bg-gray-300 dark:bg-slate-700 hover:bg-gray-400 dark:hover:bg-slate-600'}"
+                        on:click={() => setActiveTab(idx)}
+                    ></button>
+                {/each}
+            </div>
+
+            <button
+                class="flex items-center px-4 py-2 text-sm font-medium text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={activeTab === phasesList.length - 1}
+                on:click={() => setActiveTab(activeTab + 1)}
+            >
+                {activeTab < phasesList.length - 1
+                    ? phasesList[activeTab + 1].name
+                    : ""}
+                <svg
+                    class="w-5 h-5 ml-1"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                >
+                    <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M9 5l7 7-7 7"
+                    />
+                </svg>
+            </button>
+        </div>
+    </div>
+{:else}
     <div
-        class="text-center py-12 bg-yellow-50 rounded-lg border border-yellow-200"
+        class="text-center py-12 bg-gray-50 dark:bg-slate-900/50 rounded-lg border border-gray-200 dark:border-slate-800 transition-colors duration-300"
     >
         <svg
-            class="w-16 h-16 mx-auto text-yellow-500 mb-4"
+            class="w-16 h-16 mx-auto text-gray-400 dark:text-slate-700 mb-4"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -459,10 +693,10 @@
                 d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
             />
         </svg>
-        <p class="text-yellow-800 font-medium">
+        <p class="text-gray-500 dark:text-slate-400 font-medium">
             Position analysis not available for this session
         </p>
-        <p class="text-yellow-600 text-sm mt-2">
+        <p class="text-gray-400 dark:text-slate-500 text-sm mt-2">
             Upload a new swing to see phase-by-phase breakdown
         </p>
     </div>
@@ -471,9 +705,14 @@
 <style>
     input:checked ~ .dot {
         transform: translateX(100%);
-        background-color: #10b981;
+        /* background-color handled by inline class for light/dark */
     }
     input:checked ~ .block {
-        background-color: #d1fae5;
+        background-color: #059669; /* emerald-600 */
+        border-color: #047857; /* emerald-700 */
+    }
+    :global(.dark) input:checked ~ .block {
+        background-color: #064e3b; /* emerald-900 */
+        border-color: #059669; /* emerald-600 */
     }
 </style>

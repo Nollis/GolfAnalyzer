@@ -57,7 +57,8 @@ The frontend is a SvelteKit application using TailwindCSS for styling.
 ## Pose Analysis (`pose/`)
 This module contains the core computer vision and biomechanics logic.
 
-- `mediapipe_wrapper.py`: Wrapper for MediaPipe (2D pose fallback)
+- `legacy_mediapipe.py`: Wrapper for MediaPipe (2D pose fallback)
+- `types.py`: Shared pose data structures (FramePose, Point3D)
 - `smpl_extractor.py`: HybrIK integration for 3D SMPL pose extraction
 - `metrics.py`: Calculation of golf swing metrics (tempo, rotation, angles)
 - `kinematics.py`: Forward Kinematics engine for SMPL skeleton

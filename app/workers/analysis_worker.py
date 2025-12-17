@@ -63,8 +63,9 @@ class AnalysisWorker:
         """Main worker loop."""
         logger.info("Worker thread started, waiting for jobs...")
         
-        # Pre-load HybrIK model
-        self._preload_hybrik()
+        # Skip model preloading - SAM-3D subprocess needs the GPU to be free
+        # Models will lazy-load on first request
+        logger.info("Model preloading DISABLED (SAM-3D needs GPU)")
         
         queue = get_queue()
         
@@ -204,7 +205,7 @@ class AnalysisWorker:
         import cv2
         from pathlib import Path
         
-        from pose.mediapipe_wrapper import MediaPipeWrapper
+        from pose.legacy_mediapipe import MediaPipeWrapper
         from pose.swing_detection import SwingDetector
         from pose.metrics import MetricsCalculator
         from reference.reference_profiles import get_reference_profile_for
@@ -261,7 +262,7 @@ class AnalysisWorker:
                         logger.info(f"⏱️ HybrIK extraction took {time.time() - pose_start:.1f}s")
                         
                         if hybrik_frames:
-                            from pose.mediapipe_wrapper import FramePose, Point3D
+                            from pose.types import FramePose, Point3D
                             poses = []
                             for smpl_frame in hybrik_frames:
                                 mp_frame = smpl_to_mediapipe_format(smpl_frame)
@@ -297,7 +298,7 @@ class AnalysisWorker:
                     yolo_frames = extract_pose_frames_yolo(video_path)
                     
                     if yolo_frames:
-                        from pose.mediapipe_wrapper import FramePose, Point3D
+                        from pose.types import FramePose, Point3D
                         poses = []
                         for yolo_frame in yolo_frames:
                             landmarks = [
@@ -367,7 +368,7 @@ class AnalysisWorker:
         else:
             feedback_start = time.time()
             feedback_service = FeedbackService()
-            feedback = feedback_service.generate_feedback(metrics, scores, handedness, club_type, ref_profile)
+            feedback = feedback_service.generate_feedback(metrics, scores, handedness, club_type, db, ref_profile)
             logger.info(f"⏱️ Feedback generation took {time.time() - feedback_start:.1f}s")
         
         update_progress(90.0, "Saving results...")

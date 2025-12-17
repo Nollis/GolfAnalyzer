@@ -1,0 +1,325 @@
+{
+    "driver": {
+        "x_factor_top_deg": [
+            40,
+            70
+        ],
+        "chest_turn_top_deg": [
+            75,
+            110
+        ],
+        "pelvis_turn_top_deg": [
+            20,
+            50
+        ],
+        "head_rise_cm": [
+            -2,
+            4
+        ],
+        "head_drop_cm": [
+            0,
+            6
+        ],
+        "knee_flex_address_deg": [
+            145,
+            175
+        ],
+        "lead_arm_top_deg": [
+            150,
+            180
+        ],
+        "trail_elbow_top_deg": [
+            70,
+            110
+        ],
+        "spine_angle_address_deg": [
+            25,
+            45
+        ],
+        "finish_balance": [
+            0.3,
+            1.0
+        ],
+        "swing_plane_top_deg": [
+            40,
+            65
+        ]
+    },
+    "wood": {
+        "x_factor_top_deg": [
+            38,
+            68
+        ],
+        "chest_turn_top_deg": [
+            72,
+            108
+        ],
+        "pelvis_turn_top_deg": [
+            18,
+            48
+        ],
+        "head_rise_cm": [
+            -2,
+            4
+        ],
+        "head_drop_cm": [
+            0,
+            5
+        ],
+        "knee_flex_address_deg": [
+            145,
+            175
+        ],
+        "lead_arm_top_deg": [
+            155,
+            180
+        ],
+        "trail_elbow_top_deg": [
+            70,
+            105
+        ],
+        "spine_angle_address_deg": [
+            25,
+            45
+        ],
+        "finish_balance": [
+            0.3,
+            1.0
+        ],
+        "swing_plane_top_deg": [
+            42,
+            62
+        ]
+    },
+    "long_iron": {
+        "x_factor_top_deg": [
+            35,
+            65
+        ],
+        "chest_turn_top_deg": [
+            70,
+            105
+        ],
+        "pelvis_turn_top_deg": [
+            18,
+            45
+        ],
+        "head_rise_cm": [
+            -1,
+            3
+        ],
+        "head_drop_cm": [
+            0,
+            4
+        ],
+        "knee_flex_address_deg": [
+            148,
+            173
+        ],
+        "lead_arm_top_deg": [
+            155,
+            180
+        ],
+        "trail_elbow_top_deg": [
+            75,
+            105
+        ],
+        "spine_angle_address_deg": [
+            28,
+            45
+        ],
+        "finish_balance": [
+            0.3,
+            1.0
+        ],
+        "swing_plane_top_deg": [
+            45,
+            62
+        ]
+    },
+    "mid_iron": {
+        "x_factor_top_deg": [
+            33,
+            62
+        ],
+        "chest_turn_top_deg": [
+            68,
+            102
+        ],
+        "pelvis_turn_top_deg": [
+            15,
+            42
+        ],
+        "head_rise_cm": [
+            -1,
+            3
+        ],
+        "head_drop_cm": [
+            0,
+            4
+        ],
+        "knee_flex_address_deg": [
+            150,
+            172
+        ],
+        "lead_arm_top_deg": [
+            155,
+            180
+        ],
+        "trail_elbow_top_deg": [
+            75,
+            105
+        ],
+        "spine_angle_address_deg": [
+            28,
+            45
+        ],
+        "finish_balance": [
+            0.3,
+            1.0
+        ],
+        "swing_plane_top_deg": [
+            48,
+            62
+        ]
+    },
+    "short_iron": {
+        "x_factor_top_deg": [
+            30,
+            58
+        ],
+        "chest_turn_top_deg": [
+            65,
+            98
+        ],
+        "pelvis_turn_top_deg": [
+            12,
+            38
+        ],
+        "head_rise_cm": [
+            -1,
+            2
+        ],
+        "head_drop_cm": [
+            0,
+            3
+        ],
+        "knee_flex_address_deg": [
+            152,
+            172
+        ],
+        "lead_arm_top_deg": [
+            160,
+            180
+        ],
+        "trail_elbow_top_deg": [
+            80,
+            105
+        ],
+        "spine_angle_address_deg": [
+            30,
+            48
+        ],
+        "finish_balance": [
+            0.25,
+            0.9
+        ],
+        "swing_plane_top_deg": [
+            50,
+            65
+        ]
+    },
+    "wedge": {
+        "x_factor_top_deg": [
+            25,
+            52
+        ],
+        "chest_turn_top_deg": [
+            55,
+            90
+        ],
+        "pelvis_turn_top_deg": [
+            10,
+            35
+        ],
+        "head_rise_cm": [
+            -0.5,
+            2
+        ],
+        "head_drop_cm": [
+            0,
+            2
+        ],
+        "knee_flex_address_deg": [
+            155,
+            175
+        ],
+        "lead_arm_top_deg": [
+            160,
+            180
+        ],
+        "trail_elbow_top_deg": [
+            85,
+            110
+        ],
+        "spine_angle_address_deg": [
+            32,
+            50
+        ],
+        "finish_balance": [
+            0.2,
+            0.8
+        ],
+        "swing_plane_top_deg": [
+            52,
+            68
+        ]
+    },
+    "iron": {
+        "_comment": "Fallback for generic 'iron' if specific iron type not specified",
+        "x_factor_top_deg": [
+            33,
+            62
+        ],
+        "chest_turn_top_deg": [
+            68,
+            102
+        ],
+        "pelvis_turn_top_deg": [
+            15,
+            42
+        ],
+        "head_rise_cm": [
+            -1,
+            3
+        ],
+        "head_drop_cm": [
+            0,
+            4
+        ],
+        "knee_flex_address_deg": [
+            150,
+            172
+        ],
+        "lead_arm_top_deg": [
+            155,
+            180
+        ],
+        "trail_elbow_top_deg": [
+            75,
+            105
+        ],
+        "spine_angle_address_deg": [
+            28,
+            45
+        ],
+        "finish_balance": [
+            0.3,
+            1.0
+        ],
+        "swing_plane_top_deg": [
+            48,
+            62
+        ]
+    }
+}

@@ -1,7 +1,13 @@
 <script lang="ts">
-    import { onMount } from "svelte";
-    import { token, isAuthenticated } from "$lib/stores/auth";
     import { goto } from "$app/navigation";
+    import { page } from "$app/stores";
+    import { onMount } from "svelte";
+    import {
+        initializeAuth,
+        isAuthenticated,
+        token,
+        waitForAuthReady,
+    } from "$lib/stores/auth";
     import Chart from "$lib/components/Chart.svelte";
 
     interface TrendPoint {
@@ -29,8 +35,14 @@
     ];
 
     onMount(async () => {
+        await initializeAuth();
+        await waitForAuthReady();
+
         if (!$isAuthenticated) {
-            goto("/login");
+            const redirectParam = encodeURIComponent(
+                $page.url.pathname + $page.url.search,
+            );
+            goto(`/login?redirectTo=${redirectParam}`);
             return;
         }
         await fetchTrends();

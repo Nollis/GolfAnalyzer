@@ -31,6 +31,12 @@ videos/
 *.blend
 *.stl
 
+# AI Models (Large)
+*.pt
+*.pth
+*.onnx
+*.weights
+
 # Hybrik Repo Heavy Files
 hybrik_repo/model_files/
 hybrik_repo/model_files.zip

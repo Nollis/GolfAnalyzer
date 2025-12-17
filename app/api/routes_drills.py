@@ -12,14 +12,24 @@ router = APIRouter()
 def list_drills(
     category: Optional[str] = None,
     difficulty: Optional[str] = None,
+    target_metric: Optional[str] = None,
+    q: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     query = db.query(Drill)
+    
     if category:
         query = query.filter(Drill.category == category)
     if difficulty:
         query = query.filter(Drill.difficulty == difficulty)
+    if target_metric:
+        query = query.filter(Drill.target_metric == target_metric)
+    if q:
+        search = f"%{q}%"
+        from sqlalchemy import or_
+        query = query.filter(or_(Drill.title.ilike(search), Drill.description.ilike(search)))
+        
     return query.all()
 
 @router.get("/{drill_id}", response_model=DrillResponse)

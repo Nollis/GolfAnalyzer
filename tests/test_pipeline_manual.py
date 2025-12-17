@@ -5,7 +5,7 @@ import cv2
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from pose.mediapipe_wrapper import MediaPipeWrapper
+from pose.legacy_mediapipe import MediaPipeWrapper
 from pose.swing_detection import SwingDetector
 from pose.metrics import MetricsCalculator
 

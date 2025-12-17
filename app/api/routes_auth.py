@@ -22,7 +22,9 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
         hashed_password=hashed_password,
         full_name=user.full_name,
         handicap=user.handicap,
-        handedness=user.handedness
+        handedness=user.handedness,
+        height_cm=user.height_cm,
+        age=user.age
     )
     db.add(new_user)
     db.commit()
@@ -54,6 +56,8 @@ def update_user_profile(
     full_name: str = None,
     handicap: float = None,
     handedness: str = None,
+    height_cm: float = None,
+    age: int = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -64,8 +68,11 @@ def update_user_profile(
         current_user.handicap = handicap
     if handedness is not None:
         current_user.handedness = handedness
+    if height_cm is not None:
+        current_user.height_cm = height_cm
+    if age is not None:
+        current_user.age = age
     
     db.commit()
     db.refresh(current_user)
     return current_user
-

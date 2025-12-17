@@ -26,3 +26,5 @@ ultralytics
 
 # Note: HybrIK model files and repo need to be copied from golf-swing-analyzer
 # See golf-swing-analyzer/backend/hybrik_repo/ for the full HybrIK repository
+
+reportlab>=4.0.0
