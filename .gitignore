@@ -37,6 +37,9 @@ videos/
 *.onnx
 *.weights
 
+# Vendored upstream repo (remove from git if present; keep ignored to avoid re-adding)
+hybrik_repo/
+
 # Hybrik Repo Heavy Files
 hybrik_repo/model_files/
 hybrik_repo/model_files.zip
