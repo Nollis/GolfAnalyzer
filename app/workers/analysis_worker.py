@@ -135,9 +135,9 @@ class AnalysisWorker:
                 if model:
                     logger.info("✅ YOLOv8-pose model loaded")
                 else:
-                    logger.warning("⚠️ YOLOv8-pose failed to load, using MediaPipe")
+                    logger.warning("⚠️ YOLOv8-pose failed to load, using 2D landmark pipeline")
             else:
-                logger.info("YOLOv8-pose not available, using MediaPipe")
+                logger.info("YOLOv8-pose not available, using 2D landmark pipeline")
         except Exception as e:
             logger.warning(f"YOLO preload failed: {e}")
     
@@ -217,7 +217,7 @@ class AnalysisWorker:
         from app.models.db import SwingSession
         
         video_path = Path(message.video_path)
-        pose_method = "MediaPipe 2D"
+        pose_method = "2D landmark pipeline (MediaPipe-format)"
         
         # Update progress
         def update_progress(progress: float, step: str):
@@ -288,7 +288,7 @@ class AnalysisWorker:
                 logger.warning(f"HybrIK extraction failed: {e}")
                 hybrik_frames = None
         
-        # Fallback to YOLO (faster than MediaPipe, better accuracy)
+        # Fallback to YOLO (faster than legacy MediaPipe wrapper, better accuracy)
         if poses is None or len(poses) == 0:
             try:
                 from pose.yolo_pose_extractor import extract_pose_frames_yolo, is_yolo_available
@@ -321,13 +321,13 @@ class AnalysisWorker:
             except Exception as e:
                 logger.warning(f"YOLO extraction failed: {e}")
         
-        # Final fallback to MediaPipe
+        # Final fallback (legacy): MediaPipe wrapper
         if poses is None or len(poses) == 0:
-            logger.info("Using MediaPipe 2D pose extraction (final fallback)")
+            logger.info("Using 2D pose extraction via legacy MediaPipe wrapper (final fallback)")
             mp_wrapper = MediaPipeWrapper()
             poses = mp_wrapper.extract_poses_from_video(str(video_path))
-            pose_method = "MediaPipe 2D"
-            logger.info(f"MediaPipe extracted {len(poses)} frames")
+            pose_method = "2D landmark pipeline (MediaPipe-format)"
+            logger.info(f"Legacy MediaPipe wrapper extracted {len(poses)} frames")
         
         update_progress(50.0, "Detecting swing phases...")
         

@@ -1,11 +1,12 @@
 """
 Golf swing metrics computed from pose landmarks using HybrIK 3D pose estimation.
 
-Supports HybrIK (preferred) for SMPL-based 3D body mesh with anatomically-correct joints,
-with MediaPipe fallback for systems without GPU/HybrIK.
+Supports HybrIK/SMPL format (3D) and **MediaPipe landmark format** (2D, 33 landmarks).
+Note: this refers to the landmark *schema/indices*; the `mediapipe` Python package is not required.
+
 
 COORDINATE SYSTEM:
-  For 2D (MediaPipe/image coordinates):
+  For 2D (MediaPipe landmark-format / normalized image coordinates):
     - Y = 0 is TOP of image (head level)
     - Y = 1 is BOTTOM of image (feet level)
   
@@ -27,27 +28,17 @@ from typing import List, Optional, Dict, Any, Tuple
 import math
 import numpy as np
 from scipy.signal import savgol_filter
-# import mediapipe as mp # Removed legacy dependency
+# import mediapipe as mp  # Legacy (removed): we keep the MediaPipe landmark schema without the dependency.
 
-# Try to import HybrIK utilities
-try:
-    from pose.smpl_extractor import (
-        detect_key_frames_smpl,
-        smpl_to_mediapipe_format,
-        HYBRIK_29_JOINTS,
-        SMPL_JOINTS,
-        HYBRIK_AVAILABLE as _HYBRIK_AVAILABLE
-    )
-    HYBRIK_AVAILABLE = _HYBRIK_AVAILABLE
-except ImportError:
-    HYBRIK_AVAILABLE = False
-    detect_key_frames_smpl = None
-    smpl_to_mediapipe_format = None
+from typing import List, Optional, Dict, Any, Tuple
+import math
+import numpy as np
+from scipy.signal import savgol_filter
 
 from app.schemas import SwingMetrics, SwingPhases
 from pose.types import FramePose, Point3D
 
-# MediaPipe body landmark indices (Hardcoded to avoid dependency)
+# MediaPipe landmark indices (hardcoded to avoid a runtime `mediapipe` dependency)
 # See: https://developers.google.com/mediapipe/solutions/vision/pose_landmarker
 IDX_NOSE = 0
 IDX_L_SHOULDER = 11
@@ -93,7 +84,7 @@ def _get_xyz_from_frame(frame: Dict[str, Any], idx: int) -> Optional[Tuple[float
     
     Priority order:
     1. HybrIK SMPL 3D (landmarks_3d) - True anatomically-constrained 3D
-    2. MediaPipe 2D + Z estimate (landmarks) - Basic depth estimate
+    2. MediaPipe-format landmarks (landmarks) - 2D + optional Z estimate (schema-compatible)
     """
     # Prefer 3D coordinates (from HybrIK)
     landmarks_3d = frame.get("landmarks_3d")
@@ -104,7 +95,7 @@ def _get_xyz_from_frame(frame: Dict[str, Any], idx: int) -> Optional[Tuple[float
         elif isinstance(lm, (list, tuple)) and len(lm) >= 3:
             return lm[0], lm[1], lm[2]
     
-    # Fallback to MediaPipe-style 2D + Z
+    # Fallback to MediaPipe-format landmarks (2D + optional Z)
     landmarks = frame.get("landmarks", [])
     if idx >= len(landmarks):
         return None
@@ -273,7 +264,7 @@ class MetricsCalculator:
     Supports both HybrIK (3D SMPL) and MediaPipe (2D) pose estimation.
     """
     
-    def compute_metrics(self, poses: List[FramePose], phases: SwingPhases, fps: float, hybrik_frames: Optional[List[Dict[str, Any]]] = None) -> SwingMetrics:
+    def compute_metrics(self, poses: List[FramePose], phases: SwingPhases, fps: float) -> SwingMetrics:
         """
         Compute all 10 core metrics from pose frames.
         
@@ -281,7 +272,6 @@ class MetricsCalculator:
             poses: List of FramePose objects
             phases: SwingPhases with address, top, impact, finish frame indices
             fps: Frames per second of the video
-            hybrik_frames: Optional list of HybrIK SMPL frames (preferred if available)
             
         Returns:
             SwingMetrics with all 10 core metrics
@@ -289,23 +279,10 @@ class MetricsCalculator:
         if not poses:
             return self._empty_metrics()
 
-        # Convert FramePose to dict format for compatibility with HybrIK functions
+        # Convert FramePose to dict format for compatibility
         frames = self._poses_to_frames(poses)
         
-        # Merge HybrIK 3D data if available
-        if hybrik_frames and smpl_to_mediapipe_format:
-            for i, smpl_frame in enumerate(hybrik_frames):
-                if i < len(frames):
-                    mp_frame = smpl_to_mediapipe_format(smpl_frame)
-                    # Add 3D landmarks to frame
-                    frames[i]["landmarks_3d"] = mp_frame.get("landmarks_3d", [])
-                    # Update frame index and timestamp from HybrIK if available
-                    if "frame_idx" in smpl_frame:
-                        frames[i]["frame_index"] = smpl_frame["frame_idx"]
-                    if "timestamp" in smpl_frame:
-                        frames[i]["timestamp_sec"] = smpl_frame["timestamp"]
-        
-        # Check if we have HybrIK 3D data
+        # Check if we have 3D data (from whatever source)
         use_hybrik = frames and frames[0].get("landmarks_3d") is not None
         
         # Helper to get pose at specific frame

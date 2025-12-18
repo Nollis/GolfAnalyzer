@@ -5,13 +5,6 @@ from scipy.signal import savgol_filter
 from app.schemas import SwingPhases
 from pose.types import FramePose
 
-# Try to import HybrIK key frame detection
-try:
-    from pose.smpl_extractor import detect_key_frames_smpl
-    HYBRIK_AVAILABLE = True
-except ImportError:
-    HYBRIK_AVAILABLE = False
-
 
 class SwingDetector:
     def _smooth_savgol(self, data: List[float], window_size: int = 7, poly_order: int = 2) -> np.ndarray:
@@ -40,7 +33,7 @@ class SwingDetector:
             smoothed.append(sum(data[start:end]) / (end - start))
         return smoothed
 
-    def detect_swing_phases(self, poses: List[FramePose], fps: float, hybrik_frames: Optional[List[Dict[str, Any]]] = None) -> SwingPhases:
+    def detect_swing_phases(self, poses: List[FramePose], fps: float) -> SwingPhases:
         """
         Detects the key phases of the golf swing using improved heuristics.
         
@@ -51,9 +44,8 @@ class SwingDetector:
         - Finish: Hands highest after impact
         
         Args:
-            poses: List of FramePose objects (MediaPipe format)
+            poses: List of FramePose objects (MediaPipe landmark-format: 33 normalized landmarks; no `mediapipe` dependency)
             fps: Frames per second
-            hybrik_frames: Optional list of HybrIK SMPL frames (preferred if available)
         
         Returns:
             SwingPhases with address, top, impact, finish frame indices
@@ -61,44 +53,8 @@ class SwingDetector:
         if not poses:
             return SwingPhases(address_frame=0, top_frame=0, impact_frame=0, finish_frame=0)
         
-        # Use HybrIK key frame detection if available (more accurate)
-        if HYBRIK_AVAILABLE and hybrik_frames:
-            try:
-                key_frames = detect_key_frames_smpl(hybrik_frames)
-                address_idx = key_frames.get("address_idx", 0)
-                top_idx = key_frames.get("top_idx", 0)
-                impact_idx = key_frames.get("impact_idx", 0)
-                
-                # Find finish frame (highest point after impact)
-                finish_idx = len(poses) - 1
-                if impact_idx < len(poses):
-                    wrist_ys = []
-                    for i in range(impact_idx + 1, len(poses)):
-                        if len(poses[i].landmarks) > 16:
-                            ly = poses[i].landmarks[15].y
-                            ry = poses[i].landmarks[16].y
-                            wrist_ys.append((ly + ry) / 2.0)
-                        else:
-                            wrist_ys.append(0.5)
-                    
-                    if wrist_ys:
-                        smooth_ys = self._smooth_savgol(wrist_ys, window_size=5)
-                        min_idx = int(np.argmin(smooth_ys))
-                        finish_idx = impact_idx + 1 + min_idx
-                        finish_idx = min(finish_idx, len(poses) - 1)
-                
-                return SwingPhases(
-                    address_frame=max(0, address_idx),
-                    top_frame=max(0, top_idx),
-                    impact_frame=max(0, impact_idx),
-                    finish_frame=max(0, finish_idx)
-                )
-            except Exception as e:
-                # Fall back to MediaPipe detection if HybrIK fails
-                print(f"HybrIK key frame detection failed: {e}, falling back to improved heuristics")
-        
-        # Fallback to improved heuristic-based detection
-        # Extract wrist heights (y) - MediaPipe: y increases downwards (0 is top)
+        # 2D Heuristic-based detection
+        # Extract wrist heights (y) - MediaPipe-format normalized coords: y increases downwards (0 is top)
         wrist_ys = []
         
         for pose in poses:

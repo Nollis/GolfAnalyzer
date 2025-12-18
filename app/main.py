@@ -95,7 +95,7 @@ def health_check():
         "worker_running": worker.is_running(),
         "queue_size": queue.size(),
         "hybrik": hybrik_status,
-        "pose_estimation": "3D (HybrIK)" if hybrik_status == "loaded" else "2D (MediaPipe)"
+        "pose_estimation": "3D (HybrIK)" if hybrik_status == "loaded" else "2D (MediaPipe landmark-format)"
     }
 
 

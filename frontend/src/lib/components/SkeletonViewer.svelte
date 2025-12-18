@@ -86,7 +86,7 @@
     [21, 23], // Wrists -> Hands
   ];
 
-  // MediaPipe Pose connections (33 landmarks)
+  // MediaPipe landmark-format connections (33 landmarks)
   const MEDIAPIPE_CONNECTIONS = [
     [11, 13],
     [13, 15],
@@ -157,7 +157,7 @@
     ctx.lineJoin = "round";
     ctx.fillStyle = "#00FFFF";
 
-    // Prioritize data sources: MHR > SMPL > MediaPipe
+    // Prioritize data sources: MHR > SMPL > MediaPipe-format landmarks
     let landmarks = null;
     let isGlobalCoords = false;
     let isMHR = false;
@@ -178,7 +178,7 @@
       landmarks = keyFrame.smpl_joints_2d_orig;
       isGlobalCoords = true;
     } else if (keyFrame.landmarks && keyFrame.landmarks.length > 0) {
-      // Fallback to normalized/body landmarks (YOLO/MediaPipe)
+      // Fallback to normalized/body landmarks (YOLO / MediaPipe-format landmarks)
       landmarks = keyFrame.landmarks;
       // Choose sensible connections based on landmark count
       if (landmarks.length >= 33) {
@@ -355,7 +355,7 @@
           // SMPL: L/R Shoulders(16,17), Elbows(18,19), Hips(1,2), Knees(4,5), Ankles(7,8), Head(15)
           isImportant = [16, 17, 18, 19, 1, 2, 4, 5, 7, 8, 15].includes(idx);
         } else {
-          // MediaPipe
+          // MediaPipe-format (33 landmarks)
           isImportant = [
             11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28,
           ].includes(idx);

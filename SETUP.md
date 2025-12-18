@@ -5,7 +5,28 @@
 - **Python 3.9+** (Python 3.10 recommended)
 - **Node.js 18+** and npm
 - **OpenAI API Key** (optional, for AI feedback - app works without it)
-- **GPU with CUDA** (optional, for HybrIK 3D pose estimation - falls back to MediaPipe if unavailable)
+- **GPU with CUDA** (Recommended for SAM-3D performance)
+
+## External dependency: `sam-3d-body` (outside this repo)
+
+The 3D MHR pipeline calls an **external** repository via subprocess:
+- Expected sibling checkout: `..\sam-3d-body\` (next to this repo), with its own Python environment.
+- The integration is implemented in `pose/mhr_sam3d_client.py`.
+
+### Configure via environment variables (recommended)
+
+Add to your `.env` (paths are examples for Windows):
+
+```env
+# Path to the external sam-3d-body repo (folder outside this project)
+SAM3D_REPO=C:\Projekt\sam-3d-body
+
+# Path to the Python executable inside sam-3d-body's venv
+SAM3D_PYTHON=C:\Projekt\sam-3d-body\.venv\Scripts\python.exe
+```
+
+If `SAM3D_REPO`/`SAM3D_PYTHON` are not set, the app will try a best-effort default
+(a sibling `sam-3d-body/` folder next to this repo).
 
 ## Quick Start
 
@@ -25,10 +46,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-**Note**: If you have a GPU and want to use HybrIK for better accuracy:
-- PyTorch will be installed automatically
-- Make sure you have CUDA installed if using GPU
-- The app will automatically detect and use HybrIK if available, otherwise falls back to MediaPipe
+**Note**: The app uses YOLO + SAM-3D. A CUDA-capable GPU is highly recommended.
 
 #### Step 3: Set Up Environment Variables
 
@@ -46,33 +64,14 @@ OPENAI_API_KEY=sk-your-key-here
 # Skip AI feedback generation (faster analysis)
 DISABLE_FEEDBACK=false
 
-# Use YOLO instead of HybrIK (faster but less accurate)
-DISABLE_HYBRIK=false
 
-# Process every Nth frame with HybrIK (default: 2 for speed)
-# Set to 1 for all frames (slower but more accurate)
-HYBRIK_FRAME_STEP=2
 ```
 
 **Important**: The `SECRET_KEY` is used for JWT token signing. Use a strong random string in production.
 
-#### Step 4: (Optional) Copy HybrIK Repository
+#### Step 4: Settings
 
-For improved 3D pose estimation accuracy, copy the HybrIK repository:
-
-```bash
-# Copy from golf-swing-analyzer to GolfAnalyzer
-# Copy the entire folder:
-# golf-swing-analyzer/backend/hybrik_repo -> GolfAnalyzer/hybrik_repo
-```
-
-The `hybrik_repo` folder should contain:
-- `configs/` - Configuration files
-- `pretrained_models/hybrik_hrnet.pth` - Pre-trained model (~500MB)
-- `hybrik/` - HybrIK source code
-- `model_files/` - Model data files
-
-**Note**: If HybrIK is not available, the app will automatically use MediaPipe (2D pose estimation) which works fine but is less accurate.
+Configure your `.env` as needed. The app defaults to using YOLO + SAM-3D.
 
 #### Step 5: Initialize Database and Seed Data
 
@@ -157,9 +156,8 @@ npm run dev
 Before running, verify:
 
 - [ ] Python virtual environment is activated
-- [ ] All Python dependencies installed (`pip list` shows fastapi, uvicorn, mediapipe, etc.)
+- [ ] All Python dependencies installed (`pip list` shows fastapi, uvicorn, etc.)
 - [ ] `.env` file exists with `SECRET_KEY` set
-- [ ] (Optional) `hybrik_repo` folder exists if using HybrIK
 - [ ] Node.js dependencies installed (`cd frontend && npm list` shows packages)
 - [ ] Database file will be created automatically (`golf_analyzer.db`)
 
@@ -180,9 +178,8 @@ uvicorn app.main:app --reload --port 8001
 - Reinstall dependencies: `pip install -r requirements.txt`
 
 **HybrIK not working:**
-- Check if `hybrik_repo` folder exists
 - Check if PyTorch is installed: `python -c "import torch; print(torch.__version__)"`
-- App will fall back to MediaPipe automatically if HybrIK fails
+- App will fall back to the standard 2D landmark pipeline if HybrIK/SMPL features are unavailable
 
 ### Frontend Issues
 
@@ -218,17 +215,9 @@ For production:
 
 ## Features Available
 
-✅ **Without HybrIK (MediaPipe only):**
-- 2D pose estimation
-- All 10 core metrics
-- AI feedback
-- Skeleton visualization
-- Session tracking
-
-✅ **With HybrIK:**
-- 3D SMPL pose estimation (more accurate)
-- Better occlusion handling
-- Same features as above, but with improved accuracy
+✅ **Architecture:**
+- **2D Pose**: YOLOv8 (Fast, robust phase detection)
+- **3D Pose**: SAM-3D MHR (High fidelity 3D joint reconstruction)
 
 ---
 

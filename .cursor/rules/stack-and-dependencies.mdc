@@ -1,0 +1,102 @@
+---
+description: Application stack overview + major dependencies and versions (backend + frontend)
+alwaysApply: true
+---
+# Stack + Dependencies (GolfAnalyzer)
+
+This rule documents the **major libraries** used by this repo and the **versions currently in use** (as of the checked-in lockfiles / local venv snapshot).
+
+## Runtime / tooling baseline
+
+- **OS (common dev target)**: Windows
+- **Python**: 3.10.11 (from `venv\Scripts\python.exe -V`)
+- **Node.js**: `>=18.13` (required by `@sveltejs/kit` 2.49.0); recommended **Node 20 LTS** for best ecosystem support
+- **Package manager**: npm (lockfile v3: `frontend/package-lock.json`)
+
+## Backend (FastAPI) — major deps + versions
+
+Source of truth:
+- Declared: `requirements.txt` (mostly unpinned)
+- Actual installed (this workspace): `venv\Scripts\pip.exe freeze`
+
+- **FastAPI**: 0.121.3
+- **Starlette**: 0.50.0
+- **Pydantic**: 2.12.4
+- **Uvicorn**: 0.38.0
+- **SQLAlchemy**: 2.0.44
+
+### Auth / security
+
+- **python-jose**: 3.5.0 (JWT)
+- **cryptography**: 46.0.3
+- **passlib**: 1.7.4
+- **bcrypt**: 4.0.1
+- **email-validator**: 2.3.0
+
+### Uploads / config
+
+- **python-multipart**: 0.0.20
+- **python-dotenv**: 1.2.1
+
+### AI + CV/ML pipeline
+
+- **openai**: 2.8.1
+- **opencv-python / opencv-contrib-python**: 4.11.0.86
+- **ultralytics (YOLOv8)**: 8.3.235
+- **torch**: 2.9.1
+- **torchvision**: 0.24.1
+- **numpy**: 1.26.4
+- **scipy**: 1.15.3
+- **scikit-learn**: 1.7.2
+
+Notes:
+- The app uses the **MediaPipe landmark index convention/format** in places, but does **not** require the `mediapipe` Python package at runtime.
+- The app’s SAM-3D / MHR integration is an **external sibling repo** (`sam-3d-body/`) invoked via subprocess; configure via `SAM3D_REPO` / `SAM3D_PYTHON`.
+
+### Reporting
+
+- **reportlab**: 4.4.6
+
+## Frontend (SvelteKit) — major deps + versions
+
+Source of truth:
+- Declared: `frontend/package.json`
+- Resolved: `frontend/package-lock.json`
+
+- **SvelteKit**: 2.49.0
+- **Svelte**: 4.2.20
+- **Vite**: 5.4.21
+- **TypeScript**: 5.9.3
+- **Tailwind CSS**: 3.4.18
+- **Chart.js**: 4.5.1
+- **Three.js**: 0.181.2
+- **lucide-svelte**: 0.561.0
+- **@types/three**: 0.181.0
+- **@sveltejs/adapter-auto**: 3.3.1
+- **@sveltejs/vite-plugin-svelte**: 3.1.2
+
+## Version-specific best practices / remarks
+
+### Python / backend
+
+- **Pin your Python deps**: `requirements.txt` is mostly unpinned, so environments can drift. Prefer one of:
+  - Maintain a pinned `requirements.lock` (generated via `pip freeze`) and install with `pip install -r requirements.lock`
+  - Use pip-tools (`pip-compile`) to generate pinned requirements
+- **FastAPI + Pydantic v2**: you’re on FastAPI (0.121) + Pydantic (2.12), which is the “modern” combo. Prefer Pydantic v2 APIs (`model_dump`, `model_validate`) when touching schemas.
+- **SQLAlchemy 2.x**: keep code in 2.0 style (explicit sessions, `select()` style queries). Avoid legacy 1.x patterns unless already used consistently in the codebase.
+- **passlib status**: `passlib==1.7.4` is widely used but effectively unmaintained. Keep an eye on Python/bcrypt compatibility; if issues arise, consider migrating hashing to `bcrypt` directly (or another actively maintained lib) in a controlled way.
+- **OpenCV on servers**: if you deploy to a headless environment, prefer `opencv-python-headless` to avoid GUI/Qt dependencies (don’t change casually if you rely on contrib modules).
+- **Torch + Ultralytics**: keep versions aligned; upgrading Torch can break binary wheels / CUDA compatibility. Treat upgrades as planned changes and test on the target hardware.
+
+### Node / frontend
+
+- **Node version**: `@sveltejs/kit` requires `>=18.13`; `vite` supports `^18 || >=20`. Prefer **Node 20 LTS** and consider committing a `.nvmrc`/`.node-version` so the team uses a consistent runtime.
+- **Svelte 4 + SvelteKit 2**: solid and stable. Avoid mixing Svelte 5-only patterns unless you intentionally migrate.
+- **TypeScript 5.9**: modern TS features are available; keep `tsconfig` strictness stable to avoid churn.
+- **Lockfile discipline**: `package-lock.json` is your exact dependency snapshot—commit it (you do) and avoid hand-editing.
+
+## Refreshing version snapshots
+
+- **Backend**: `venv\Scripts\pip.exe freeze`
+- **Frontend**: `cd frontend && npm ls --depth=0` (declared vs resolved still comes from `package-lock.json`)
+

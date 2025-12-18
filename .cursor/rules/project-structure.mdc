@@ -1,0 +1,80 @@
+---
+description: Project directory structure + important files/folders (GolfAnalyzer)
+alwaysApply: true
+---
+# GolfAnalyzer Project Structure
+
+This repository is a full-stack app:
+- **Backend**: FastAPI (Python) in `app/`
+- **Frontend**: SvelteKit (TypeScript) in `frontend/`
+- **Pose / biomechanics pipeline**: Python modules in `pose/`
+
+## Top-level layout (what goes where)
+
+```
+GolfAnalyzer/
+├── app/                      # FastAPI backend (API, DB, services, workers)
+├── pose/                     # Pose extraction + swing metrics + refinement pipeline
+├── reference/                # Pro reference profiles + scoring logic
+├── services/                 # Standalone services (currently feedback-related)
+├── video/                    # Video utilities (frame extraction, etc.)
+├── frontend/                 # SvelteKit UI (routes, components, stores)
+├── tests/                    # Python test suite
+├── scripts/                  # One-off utilities, migrations, data maintenance
+├── config/                   # JSON configs (benchmarks/targets)
+├── experiments/              # Local experiments (not core runtime)
+├── .cursor/rules/            # Cursor agent rules (project conventions)
+├── requirements.txt          # Python deps
+├── README.md / SETUP.md      # Developer docs
+└── worker.py                 # Worker entrypoint (job processing)
+```
+
+## Backend (`app/`) map
+
+- **Entrypoint**: `app/main.py` (FastAPI app wiring)
+- **API routes**: `app/api/routes_*.py`
+- **Dependencies / auth**: `app/api/deps.py`, `app/core/security.py`
+- **Database**: `app/core/database.py`
+- **Models**: `app/models/*.py` (SQLAlchemy)
+- **Schemas**: `app/schemas.py` (Pydantic)
+- **Services**: `app/services/*.py` (business logic)
+- **Workers**: `app/workers/*` (async/background processing)
+
+## Pose pipeline (`pose/`) map
+
+- **Core pipeline**: `pose/mhr_pipeline.py`
+- **Metrics**: `pose/metrics.py` and `pose/mhr_*_metrics.py`
+- **Swing phase detection**: `pose/swing_detection.py`
+- **Smoothing / kinematics**: `pose/smoothing.py`, `pose/kinematics.py`
+- **Extraction**: `pose/yolo_pose_extractor.py` (and related helpers)
+- **External SAM-3D integration**: `pose/mhr_sam3d_client.py` (calls sibling `sam-3d-body/` via subprocess; configured via `SAM3D_REPO` / `SAM3D_PYTHON`)
+- **Refinements**: `pose/refinement/*` (e.g., plane-of-swing)
+
+## Frontend (`frontend/`) map
+
+- **Pages**: `frontend/src/routes/**/+page.svelte` (+ layouts / server files)
+- **UI components**: `frontend/src/lib/components/*.svelte`
+- **State**: `frontend/src/lib/stores/*.ts`
+- **Build config**: `frontend/vite.config.ts`, `frontend/svelte.config.*`, `frontend/tailwind.config.*`
+
+## Key “glue” config / docs
+
+- **Python deps**: `requirements.txt`
+- **Setup docs**: `README.md`, `SETUP.md`
+- **Runtime configs**: `config/club_metric_targets.json`
+
+## Generated / local-only directories (typically not edited)
+
+These often exist locally but usually shouldn’t be committed or hand-edited:
+- `venv/` (Python virtualenv)
+- `frontend/node_modules/` (Node deps)
+- `__pycache__/` (Python bytecode)
+- `uploads/`, `storage/`, `videos/` (runtime data / assets depending on setup)
+
+## Editing guidance
+
+- **New backend endpoints**: add a new `app/api/routes_*.py` or extend an existing one; wire it in `app/main.py`.
+- **New DB tables/columns**: update `app/models/*` and any corresponding Pydantic in `app/schemas.py`; ensure startup/migrations logic remains consistent.
+- **New computed metrics**: add to `pose/metrics.py` / appropriate `pose/mhr_*_metrics.py` and update any scoring in `reference/`.
+- **New UI pages**: add under `frontend/src/routes/`; shared UI belongs in `frontend/src/lib/components/`.
+

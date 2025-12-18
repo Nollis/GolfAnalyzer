@@ -216,10 +216,10 @@
             const p1 = landmarks[start];
             const p2 = landmarks[end];
             // For Pro poses we assume indices map to our simplified list if we used indices,
-            // BUT our PRO_POSES structure is just a list of points, not a full MediaPipe 33-point set.
-            // Wait, my PRO_POSES just has 13 points. MediaPipe has 33.
+            // BUT our PRO_POSES structure is just a list of points, not a full MediaPipe landmark-format 33-point set.
+            // Wait, my PRO_POSES just has 13 points. MediaPipe landmark-format has 33.
             // The CONNECTIONS indices (11-32) won't match my 13-point Pro list!
-            // I need to map my Pro points to the MediaPipe indices or use a different drawing logic for Pro.
+            // I need to map my Pro points to the MediaPipe landmark indices or use a different drawing logic for Pro.
 
             // Let's fix PRO_POSES to use a map or full array.
             // Or simpler: Just draw lines between the points I defined for Pro.
@@ -251,7 +251,7 @@
                     [10, 12], // Right Leg
                 ];
 
-                const pp1 = landmarks[start]; // This won't work because 'start' is a MediaPipe index (e.g. 11)
+                const pp1 = landmarks[start]; // This won't work because 'start' is a MediaPipe landmark index (e.g. 11)
                 // We need separate logic.
             } else {
                 if (p1 && p2 && p1.visibility > 0.5 && p2.visibility > 0.5) {

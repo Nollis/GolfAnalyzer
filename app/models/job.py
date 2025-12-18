@@ -48,7 +48,7 @@ class AnalysisJob(Base):
     completed_at = Column(DateTime, nullable=True)
     
     # Processing metadata
-    pose_method = Column(String(50), nullable=True)  # "HybrIK 3D" or "MediaPipe 2D"
+    pose_method = Column(String(50), nullable=True)  # e.g. "HybrIK 3D" or "2D landmark pipeline (MediaPipe-format)"
     processing_time_ms = Column(Float, nullable=True)
 
 

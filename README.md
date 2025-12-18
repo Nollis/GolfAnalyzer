@@ -1,12 +1,12 @@
 # Golf Swing Analyzer
 
-A comprehensive full-stack application to analyze golf swings using computer vision (MediaPipe) and AI feedback.
+A comprehensive full-stack application to analyze golf swings using computer vision (YOLO/SAM-3D) and AI feedback.
 
 ## Features
 
 ### Core Analysis
 - **Video Upload**: Upload swing videos for detailed biomechanical analysis
-- **Pose Estimation**: Extracts 33 body landmarks using MediaPipe Pose
+- **Pose Estimation**: Extracts 33 body landmarks (**MediaPipe landmark format / indices**, not the `mediapipe` package) using YOLO/SAM-3D
 - **Swing Phase Detection**: Automatically identifies Address, Top, Impact, and Finish phases
 - **Position Analysis**: 
   - Visual breakdown of key swing phases
@@ -51,10 +51,14 @@ A comprehensive full-stack application to analyze golf swings using computer vis
 
 ### Backend
 - **Framework**: FastAPI (Python 3.9+)
-- **Computer Vision**: MediaPipe Pose
+- **Computer Vision**: YOLOv8 (2D Phase) + SAM-3D (3D Joint Support)
 - **Database**: SQLite (SQLAlchemy ORM)
 - **AI**: OpenAI GPT for feedback generation
 - **Authentication**: JWT tokens with bcrypt password hashing
+
+### External (not vendored in this repo)
+
+- **SAM-3D MHR**: The 3D joint reconstruction is performed by an **external** sibling repo `sam-3d-body/` (invoked via subprocess). Configure via `.env` (`SAM3D_REPO`, `SAM3D_PYTHON`).
 
 ### Frontend
 - **Framework**: SvelteKit with TypeScript
@@ -151,7 +155,7 @@ GolfAnalyzer/
 │   ├── schemas.py         # Pydantic schemas
 │   └── services/          # Business logic
 ├── pose/                  # Pose estimation and analysis
-│   ├── legacy_mediapipe.py
+
 │   ├── types.py
 │   ├── swing_detection.py
 │   └── metrics.py

@@ -11,12 +11,33 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
-# Paths to the SAM-3D repo and Python environment
-SAM3D_PYTHON = Path(r"C:\Projekt\sam-3d-body\.venv\Scripts\python.exe")
-SAM3D_REPO = Path(r"C:\Projekt\sam-3d-body")
+def _default_sam3d_repo() -> Path:
+    """
+    Best-effort default: assume `sam-3d-body/` is a sibling folder next to this repo.
+    (i.e. `../sam-3d-body` relative to GolfAnalyzer root)
+    """
+    project_root = Path(__file__).resolve().parents[1]
+    return (project_root.parent / "sam-3d-body").resolve()
+
+
+def _default_sam3d_python(sam3d_repo: Path) -> Path:
+    """Best-effort default for the external repo's Python executable."""
+    # Windows venv
+    win = sam3d_repo / ".venv" / "Scripts" / "python.exe"
+    # Unix venv
+    nix = sam3d_repo / ".venv" / "bin" / "python"
+    return win if win.exists() else nix
+
+
+# Paths to the external SAM-3D repo and Python environment (override via env vars)
+SAM3D_REPO = Path(os.getenv("SAM3D_REPO", str(_default_sam3d_repo())))
+SAM3D_PYTHON = Path(os.getenv("SAM3D_PYTHON", str(_default_sam3d_python(SAM3D_REPO))))
+
+# Script entrypoints within `sam-3d-body/`
 SAM3D_SCRIPT = SAM3D_REPO / "sam3d_export_joints.py"
 SAM3D_BATCH_SCRIPT = SAM3D_REPO / "sam3d_export_batch.py"
 
