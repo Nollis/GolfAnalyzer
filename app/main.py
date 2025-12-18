@@ -3,7 +3,7 @@ load_dotenv(override=True)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import routes_analyze, routes_auth, routes_analytics, routes_drills, routes_admin, routes_jobs
+from app.api import routes_analyze, routes_auth, routes_analytics, routes_drills, routes_admin, routes_jobs, routes_storage
 from app.core.database import Base, engine
 import logging
 
@@ -27,6 +27,7 @@ app.include_router(routes_jobs.router, prefix="/api/v1/jobs", tags=["jobs"])
 app.include_router(routes_analytics.router, prefix="/api/v1/analytics", tags=["analytics"])
 app.include_router(routes_drills.router, prefix="/api/v1/drills", tags=["drills"])
 app.include_router(routes_admin.router, prefix="/api/v1/admin", tags=["admin"])
+app.include_router(routes_storage.router, prefix="/api/v1", tags=["storage"])
 
 
 @app.on_event("startup")

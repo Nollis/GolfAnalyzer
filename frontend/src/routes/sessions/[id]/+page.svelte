@@ -148,53 +148,58 @@
       return;
     }
 
+    // Start fetching everything in parallel
+    const sessionPromise = fetch(`/api/v1/sessions/${id}`, {
+      headers: { Authorization: `Bearer ${$token}` },
+    });
+
+    const posesPromise = fetch(`/api/v1/sessions/${id}/poses`, {
+      headers: { Authorization: `Bearer ${$token}` },
+    });
+
+    const keyFramesPromise = fetch(`/api/v1/sessions/${id}/key-frames`, {
+      headers: { Authorization: `Bearer ${$token}` },
+    });
+
     try {
-      const res = await fetch(`/api/v1/sessions/${id}`, {
-        headers: { Authorization: `Bearer ${$token}` },
-      });
-      if (!res.ok) throw new Error("Session not found");
-      session = (await res.json()) as Session;
+      // Wait for MAIN session data first
+      const sessionRes = await sessionPromise;
+      if (!sessionRes.ok) throw new Error("Session not found");
+      session = (await sessionRes.json()) as Session;
 
-      // Fetch poses
-      try {
-        const posesRes = await fetch(`/api/v1/sessions/${id}/poses`, {
-          headers: { Authorization: `Bearer ${$token}` },
-        });
-        if (posesRes.ok) {
-          poses = await posesRes.json();
-        }
-      } catch (e) {
-        console.error("Failed to fetch poses", e);
-      }
+      // Stop showing main loader once session data is here
+      loading = false;
 
-      // Fetch key frames for skeleton visualization
-      try {
-        const keyFramesRes = await fetch(`/api/v1/sessions/${id}/key-frames`, {
-          headers: { Authorization: `Bearer ${$token}` },
-        });
-        if (keyFramesRes.ok) {
-          keyFrames = await keyFramesRes.json();
-        }
-      } catch (e) {
-        console.error("Failed to fetch key frames", e);
-      }
+      // Handle the other requests in the background/update as they arrive
 
-      // Fetch personal best for comparison (always show for reference)
-      try {
-        const pbRes = await fetch(
-          `/api/v1/personal-best?club_type=${session.metadata.club_type}&view=${session.metadata.view}`,
-          { headers: { Authorization: `Bearer ${$token}` } },
-        );
-        if (pbRes.ok) {
-          const pbData = await pbRes.json();
-          if (pbData) personalBest = pbData as PersonalBest;
-        }
-      } catch (e) {
-        console.error("Failed to fetch personal best", e);
-      }
+      // Poses
+      posesPromise
+        .then(async (res) => {
+          if (res.ok) poses = await res.json();
+        })
+        .catch((e) => console.error("Failed to fetch poses", e));
+
+      // Key Frames
+      keyFramesPromise
+        .then(async (res) => {
+          if (res.ok) keyFrames = await res.json();
+        })
+        .catch((e) => console.error("Failed to fetch key frames", e));
+
+      // Personal Best (Dependent on Session)
+      fetch(
+        `/api/v1/personal-best?club_type=${session.metadata.club_type}&view=${session.metadata.view}`,
+        { headers: { Authorization: `Bearer ${$token}` } },
+      )
+        .then(async (res) => {
+          if (res.ok) {
+            const pbData = await res.json();
+            if (pbData) personalBest = pbData as PersonalBest;
+          }
+        })
+        .catch((e) => console.error("Failed to fetch personal best", e));
     } catch (e: unknown) {
       error = (e as Error).message;
-    } finally {
       loading = false;
     }
   });

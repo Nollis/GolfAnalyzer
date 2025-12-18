@@ -14,6 +14,13 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
 
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    handicap: Optional[float] = None
+    handedness: Optional[str] = None
+    height_cm: Optional[float] = None
+    age: Optional[int] = None
+
 class UserResponse(UserBase):
     id: str
     is_active: bool
@@ -169,6 +176,19 @@ class SwingFeedback(BaseModel):
     priority_issues: List[str]
     drills: List[DrillResponse]
     phase_feedback: Optional[Dict[str, str]] = {}
+
+class SimpleScores(BaseModel):
+    overall_score: int
+
+class SessionSummaryResponse(BaseModel):
+    session_id: str
+    scores: SimpleScores
+    metadata: SwingAnalysisRequest
+    is_personal_best: bool = False
+    created_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
 
 class AnalysisResponse(BaseModel):
     session_id: Optional[str] = None

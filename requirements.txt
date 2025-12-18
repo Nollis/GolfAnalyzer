@@ -2,7 +2,6 @@ fastapi
 uvicorn
 pydantic[email]
 sqlalchemy
-mediapipe
 opencv-python
 openai
 python-multipart
@@ -12,7 +11,7 @@ passlib[bcrypt]
 bcrypt==4.0.1
 email-validator
 
-# HybrIK dependencies for 3D SMPL pose estimation (most accurate)
+# 3D SMPL dependencies (SAM-3D / MHR)
 torch>=1.9.0
 torchvision>=0.10.0
 numpy>=1.19.0
@@ -21,10 +20,7 @@ easydict
 scikit-learn
 chumpy  # Required for SMPL body model loading
 
-# YOLOv8-pose for fast 2D pose estimation (fallback when HybrIK unavailable)
+# YOLOv8-pose for fast 2D pose estimation
 ultralytics
-
-# Note: HybrIK model files and repo need to be copied from golf-swing-analyzer
-# See golf-swing-analyzer/backend/hybrik_repo/ for the full HybrIK repository
 
 reportlab>=4.0.0

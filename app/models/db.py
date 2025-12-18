@@ -155,4 +155,23 @@ class ReferenceProfileDB(Base):
     id = Column(String, primary_key=True, default=generate_uuid)
     name = Column(String, unique=True)
     targets = Column(JSON) # Dict of metric targets
-    is_default = Column(Integer, default=0) # 0 or 1 (boolean)
+
+class Job(Base):
+    __tablename__ = "jobs"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Status Machine: queued -> processing -> completed | failed
+    status = Column(String, default="queued", index=True)
+    
+    # Job Data
+    job_type = Column(String, default="swing_analysis")
+    payload = Column(JSON)  # Input arguments (video_path, config)
+    result = Column(JSON, nullable=True)  # Output results
+    error = Column(String, nullable=True) # Error message if failed
+    
+    # Worker Metadata
+    worker_id = Column(String, nullable=True)
+    attempts = Column(Integer, default=0)

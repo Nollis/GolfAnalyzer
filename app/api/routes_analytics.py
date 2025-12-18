@@ -74,10 +74,19 @@ def get_trends(
             trends_by_club[s.club_type] = []
             
         # Extract key metrics
+        # Extract key metrics
+        def get_metric(obj, key):
+            val = getattr(obj, key, 0)
+            return val if val is not None else 0
+
         metrics = {
-            "tempo_ratio": s.metrics.get("tempo_ratio", 0),
-            "shoulder_turn": s.metrics.get("shoulder_turn_top_deg", 0),
-            "hip_turn": s.metrics.get("hip_turn_top_deg", 0)
+            "tempo_ratio": get_metric(s.metrics, "tempo_ratio") if s.metrics else 0,
+            "shoulder_turn": get_metric(s.metrics, "shoulder_turn_top_deg") if s.metrics else 0,
+            "hip_turn": get_metric(s.metrics, "hip_turn_top_deg") if s.metrics else 0,
+            "head_vertical": get_metric(s.metrics, "head_movement_vertical_cm") if s.metrics else 0,
+            "head_drop_cm": get_metric(s.metrics, "head_drop_cm") if s.metrics else 0,
+            "head_rise_cm": get_metric(s.metrics, "head_rise_cm") if s.metrics else 0,
+            "swing_path_index": get_metric(s.metrics, "swing_path_index") if s.metrics else 0
         }
         
         trends_by_club[s.club_type].append(TrendPoint(
@@ -125,8 +134,8 @@ def compare_sessions(
     ]
     
     for key, name, target in common_metrics:
-        v1 = s1.metrics.get(key, 0)
-        v2 = s2.metrics.get(key, 0)
+        v1 = getattr(s1.metrics, key, 0) if s1.metrics else 0
+        v2 = getattr(s2.metrics, key, 0) if s2.metrics else 0
         diff = v2 - v1
         
         # Improvement logic depends on metric. 

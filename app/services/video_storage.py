@@ -1,77 +1,47 @@
-import os
-import shutil
 from pathlib import Path
 from typing import Optional
-import uuid
+from app.core.storage import get_storage
 
 class VideoStorage:
-    """Service for managing video file storage"""
+    """Service for managing video file storage using the core Storage Abstraction"""
     
-    def __init__(self, storage_dir: str = "videos"):
-        self.storage_dir = Path(storage_dir)
-        # Create videos directory if it doesn't exist
-        self.storage_dir.mkdir(exist_ok=True)
+    def __init__(self):
+        self.storage = get_storage()
     
+    def _get_key(self, session_id: str) -> str:
+        return f"videos/{session_id}.mp4"
+
     def save_video(self, temp_file_path: str, session_id: str) -> str:
         """
-        Save video file permanently
-        
-        Args:
-            temp_file_path: Path to temporary uploaded file
-            session_id: Session ID to use as filename
-            
-        Returns:
-            Relative path to saved video
+        Save video file permanently to storage.
+        Returns the storage KEY.
         """
-        # Use session_id as filename to ensure uniqueness
-        video_filename = f"{session_id}.mp4"
-        video_path = self.storage_dir / video_filename
-        
-        # Copy temp file to permanent location
-        shutil.copy2(temp_file_path, video_path)
-        
-        # Return relative path
-        return str(video_path)
+        key = self._get_key(session_id)
+        self.storage.save(temp_file_path, key)
+        return key
     
     def get_video_path(self, session_id: str) -> Optional[Path]:
         """
-        Get full path to video file
-        
-        Args:
-            session_id: Session ID
-            
-        Returns:
-            Full path to video file, or None if not found
+        Get local path to video file (if available).
         """
-        video_path = self.storage_dir / f"{session_id}.mp4"
-        if video_path.exists():
-            return video_path
-        return None
+        key = self._get_key(session_id)
+        try:
+            path_str = self.storage.get_path(key)
+            return Path(path_str)
+        except NotImplementedError:
+            return None
     
     def get_video_url(self, session_id: str) -> str:
         """
         Get URL for video file
-        
-        Args:
-            session_id: Session ID
-            
-        Returns:
-            URL path to video
         """
-        return f"/api/v1/sessions/{session_id}/video"
+        key = self._get_key(session_id)
+        return self.storage.get_url(key)
     
     def delete_video(self, session_id: str) -> bool:
         """
         Delete video file
-        
-        Args:
-            session_id: Session ID
-            
-        Returns:
-            True if deleted, False if not found
         """
-        video_path = self.storage_dir / f"{session_id}.mp4"
-        if video_path.exists():
-            video_path.unlink()
-            return True
-        return False
+        key = self._get_key(session_id)
+        return self.storage.delete(key)
+

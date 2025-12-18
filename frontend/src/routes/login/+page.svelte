@@ -152,6 +152,36 @@
                         </div>
                     {/if}
 
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center">
+                            <input
+                                id="remember-me"
+                                name="remember-me"
+                                type="checkbox"
+                                class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded dark:border-slate-700 dark:bg-slate-900"
+                            />
+                            <label
+                                for="remember-me"
+                                class="ml-2 block text-sm text-gray-900 dark:text-slate-300"
+                            >
+                                Remember me
+                            </label>
+                        </div>
+
+                        <div class="text-sm">
+                            <button
+                                type="button"
+                                on:click={() =>
+                                    alert(
+                                        "Check server console for reset token simulation!",
+                                    )}
+                                class="font-medium text-green-600 hover:text-green-500 dark:text-emerald-400"
+                            >
+                                Forgot your password?
+                            </button>
+                        </div>
+                    </div>
+
                     <div>
                         <button
                             type="submit"
@@ -184,6 +214,40 @@
                                 Sign in
                             {/if}
                         </button>
+                    </div>
+
+                    <div class="relative">
+                        <div class="absolute inset-0 flex items-center">
+                            <div
+                                class="w-full border-t border-gray-300 dark:border-slate-800"
+                            ></div>
+                        </div>
+                        <div class="relative flex justify-center text-sm">
+                            <span
+                                class="px-2 bg-white dark:bg-slate-950 text-gray-500 dark:text-slate-400"
+                            >
+                                Or continue with
+                            </span>
+                        </div>
+                    </div>
+
+                    <div>
+                        <a
+                            href="/api/v1/login/google"
+                            class="w-full flex justify-center items-center py-2 px-4 border border-gray-300 dark:border-slate-700 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-slate-200 bg-white dark:bg-slate-900 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+                        >
+                            <svg
+                                class="h-5 w-5 mr-2"
+                                aria-hidden="true"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    d="M12.0003 20.45c-4.6667 0-8.45-3.7833-8.45-8.45 0-4.6667 3.7833-8.45 8.45-8.45 2.0833 0 4.0833.6667 5.75 1.9167v-.0392l3.2083-3.2084c-2.4583-1.875-5.5416-3.0833-8.9583-3.0833-8.0833 0-14.65 6.5667-14.65 14.65s6.5667 14.65 14.65 14.65c7.375 0 13.5917-5.3834 14.5084-12.4417H12.0003v-4.1166h16.7c.1667 1.2916.2917 2.625.2917 4.0416 0 8.0834-5.4167 14.7334-17.0334 14.7334Z"
+                                    fill="currentColor"
+                                />
+                            </svg>
+                            Google
+                        </a>
                     </div>
 
                     <div class="mt-6">

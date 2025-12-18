@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body, Query
-from app.schemas import AnalysisResponse, SwingPhases, SwingMetrics, SwingScores, SwingFeedback, SwingAnalysisRequest, MetricScore, DrillResponse, ReferenceProfileCreate, ReferenceProfileResponse
-from pose.legacy_mediapipe import MediaPipeWrapper
+from app.schemas import AnalysisResponse, SwingPhases, SwingMetrics, SwingScores, SwingFeedback, SwingAnalysisRequest, MetricScore, DrillResponse, ReferenceProfileCreate, ReferenceProfileResponse, SessionSummaryResponse, SimpleScores
+
 from pose.types import FramePose, Point3D
 from pose.swing_detection import SwingDetector
 from pose.metrics import MetricsCalculator
@@ -30,6 +30,7 @@ from app.core.database import get_db, Base, engine
 from fastapi import Depends
 from app.services.analysis_repository import AnalysisRepository
 from app.services.video_storage import VideoStorage
+from app.core.storage import get_storage
 from app.api.deps import get_current_active_user
 from app.models.user import User
 from app.models.db import SwingSession
@@ -78,21 +79,69 @@ def _get_feedback_from_db(feedback_db) -> SwingFeedback:
 
 router = APIRouter()
 
+from app.services.job_queue import JobQueue
+from app.core.storage import get_storage
+from typing import Dict, Any
+
+@router.post("/jobs/analyze", summary="Async Swing Analysis", tags=["jobs"])
+async def analyze_swing_async(
+    video: UploadFile = File(...),
+    handedness: Optional[str] = Form(None),
+    view: str = Form(...),
+    club_type: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Submits a swing analysis job to the queue.
+    Returns a job_id immediately.
+    """
+    # 1. Save File to persistent storage using Storage Abstraction
+    # "uploads" prefix is logical key grouping
+    file_id = str(uuid.uuid4())
+    ext = Path(video.filename).suffix or ".mp4"
+    key = f"uploads/{file_id}{ext}"
+    
+    try:
+        storage = get_storage()
+        storage.save(video.file, key)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save upload: {e}")
+        
+    # 2. Enqueue Job
+    payload = {
+        "video_key": key,
+        "handedness": handedness,
+        "view": view,
+        "club_type": club_type,
+        "user_id": current_user.id
+    }
+    
+    job = JobQueue.enqueue(db, payload, job_type="swing_analysis")
+    
+    return {
+        "job_id": job.id,
+        "status": "queued",
+        "message": "Analysis queued successfully. Poll /jobs/{job_id} for results."
+    }
+
+@router.get("/jobs/{job_id}", summary="Get Job Status", tags=["jobs"])
+def get_job_status(
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    status = JobQueue.get_job_status(db, job_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Job not found")
+        
+    return status
+
+# Legacy Synchronous Endpoint (kept for compatibility, calls internal service directly)
+# NOTE: In a real migration, this might also just enqueue and wait.
 @router.post("/analyze-swing", response_model=AnalysisResponse, 
-              summary="Analyze swing (synchronous)",
-              description="""
-Synchronous analysis endpoint. Waits for full analysis to complete before returning.
-
-**For better performance, use the async endpoint instead:**
-- POST /api/v1/jobs/analyze - Returns immediately with job_id
-- GET /api/v1/jobs/{job_id} - Poll for status/progress
-- When status is 'completed', session_id contains the results
-
-The async pattern is recommended for:
-- Production deployments
-- Large videos
-- Multiple concurrent users
-""")
+              summary="Analyze swing (synchronous - DEPRECATED)",
+              description="Deprecated. Use POST /jobs/analyze for async processing.")
 async def analyze_swing(
     video: UploadFile = File(...),
     handedness: Optional[str] = Form(None),
@@ -101,459 +150,160 @@ async def analyze_swing(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    # Save uploaded file to temp
-    suffix = ".mp4" # Assume mp4 or grab from filename
+    # For backward compat, we reuse the service logic synchronously
+    from app.services.analysis import run_analysis_pipeline
+    
+    # Save temp
+    suffix = ".mp4" 
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         shutil.copyfileobj(video.file, tmp)
         tmp_path = tmp.name
-
+        
     try:
-        # Get FPS
-        cap = cv2.VideoCapture(tmp_path)
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        cap.release()
-        if fps <= 0: fps = 30.0
+        # Run pipeline directly (blocking)
+        result = run_analysis_pipeline(
+            video_path=tmp_path,
+            handedness=handedness,
+            view=view,
+            club_type=club_type,
+            user_id=current_user.id,
+            db=db
+        )
         
-        # 1. Pose Extraction - Try YOLO first (fast), then HybrIK (3D), fallback to MediaPipe
-        hybrik_frames = None
-        poses = None
-        pose_method = "unknown"
-        
-        # Try YOLO first (fastest and most consistent for phase detection)
-        try:
-            from pose.yolo_pose_extractor import extract_pose_frames_yolo, is_yolo_available
-            if is_yolo_available():
-                print("🎯 Using YOLOv8 for fast pose extraction...")
-                yolo_frames = extract_pose_frames_yolo(Path(tmp_path), frame_step=1)
-                
-                if yolo_frames and len(yolo_frames) > 0:
-                    from pose.types import FramePose, Point3D
-                    poses = []
-                    for yf in yolo_frames:
-                        landmarks = [
-                            Point3D(
-                                x=lm["x"],
-                                y=lm["y"],
-                                z=lm.get("z", 0.0),
-                                visibility=lm.get("visibility", 1.0),
-                            )
-                            for lm in yf["landmarks"]
-                        ]
-                        pose = FramePose(
-                            frame_index=yf["frame_index"],
-                            timestamp_ms=yf.get("timestamp_sec", 0) * 1000.0,
-                            landmarks=landmarks,
-                        )
-                        poses.append(pose)
-                    
-                    pose_method = "YOLOv8"
-                    print(f"✅ YOLO extracted {len(poses)} frames")
-        except Exception as e:
-            print(f"⚠️ YOLO extraction failed: {e}, trying HybrIK...")
-            import traceback
-            traceback.print_exc()
-        
-        # NOTE: HybrIK is disabled - being replaced by SAM-3D MHR for 3D poses
-        # The GPU is needed for SAM-3D, so HybrIK is commented out to avoid conflicts
-        # YOLO is used for fast 2D phase detection, SAM-3D for detailed 3D joints
-        
-        # if HYBRIK_AVAILABLE and is_smpl_available():
-        #     try:
-        #         print("Attempting HybrIK 3D pose extraction...")
-        #         extractor = get_hybrik_extractor()
-        #         if extractor:
-        #             if not extractor._loaded:
-        #                 print("Loading HybrIK model (first time may take 30-60s)...")
-        #                 extractor.load_model()
-        #
-        #             print("Extracting poses from video with HybrIK...")
-        #             hybrik_frames = extractor.extract_video(Path(tmp_path), frame_step=1)
-        #
-        #             # If YOLO didn't work, use HybrIK poses
-        #             if hybrik_frames and (poses is None or len(poses) == 0):
-        #                 from pose.types import FramePose, Point3D
-        #                 poses = []
-        #                 for smpl_frame in hybrik_frames:
-        #                     mp_frame = smpl_to_mediapipe_format(smpl_frame)
-        #                     landmarks = [
-        #                         Point3D(
-        #                             x=lm["x"],
-        #                             y=lm["y"],
-        #                             z=lm["z"],
-        #                             visibility=lm["visibility"],
-        #                         )
-        #                         for lm in mp_frame["landmarks"]
-        #                     ]
-        #                     pose = FramePose(
-        #                         frame_index=mp_frame.get("frame_idx", 0),
-        #                         timestamp_ms=mp_frame.get("timestamp", 0) * 1000.0,
-        #                         landmarks=landmarks,
-        #                     )
-        #                     poses.append(pose)
-        #
-        #                 pose_method = "HybrIK 3D"
-        #                 print(f"HybrIK extracted {len(poses)} frames with 3D SMPL data")
-        #             elif hybrik_frames:
-        #                 print(f"HybrIK extracted {len(hybrik_frames)} 3D frames (YOLO used for phases)")
-        #         else:
-        #             print("Could not get HybrIK extractor")
-        #     except Exception as e:
-        #         print(f"HybrIK extraction failed: {e}, falling back to MediaPipe")
-        #         import traceback
-        #         traceback.print_exc()
-        #         hybrik_frames = None
-        
-        # Fallback to MediaPipe if YOLO failed
-        if poses is None or len(poses) == 0:
-            print("Using MediaPipe 2D pose estimation (fallback)")
-            mp_wrapper = MediaPipeWrapper()
-            poses = mp_wrapper.extract_poses_from_video(tmp_path)
-            pose_method = "MediaPipe 2D"
-            
-        # 1.5. Temporal Smoothing - DISABLED (HybrIK disabled)
-        # Will be replaced with MHR-based smoothing later
-        # if hybrik_frames:
-        #     ... (temporal smoothing code)
-        
-        # 2. SwingDetector - uses YOLO poses for phase detection
-        detector = SwingDetector()
-        phases = detector.detect_swing_phases(poses, fps, hybrik_frames=None)
-
-        # 2.5. MHR Pipeline (Optional) - Extract MHR-70 joints from key frames via SAM-3D
-        mhr_data = None
-        try:
-            from pose.mhr_pipeline import analyze_with_mhr, mhr_result_to_serializable
-            from pose.mhr_sam3d_client import is_sam3d_available
-            
-            if is_sam3d_available():
-                print("[MHR] Running SAM-3D MHR analysis on key frames...")
-                mhr_data = analyze_with_mhr(
-                    video_path=Path(tmp_path),
-                    poses=poses,
-                    fps=fps,
-                    hybrik_frames=hybrik_frames
-                )
-                
-                # Log summary
-                success_count = sum(1 for p in mhr_data.values() if p.get("joints3d") is not None)
-                print(f"[MHR] Analysis complete: {success_count}/4 phases extracted successfully")
-                
-                for phase_name, data in mhr_data.items():
-                    if data.get("joints3d") is not None:
-                        print(f"[MHR] {phase_name}: frame {data['frame']}, joints3d shape {data['joints3d'].shape}")
-                    elif data.get("error"):
-                        print(f"[MHR] {phase_name}: {data['error']}")
-            else:
-                print("[MHR] SAM-3D not available, skipping MHR analysis")
-        except Exception as e:
-            print(f"[MHR] MHR pipeline failed: {e}")
-            import traceback
-            traceback.print_exc()
-            # Continue with normal analysis
-
-        # 3. Metrics - Pass HybrIK frames if available
-        calculator = MetricsCalculator()
-        metrics = calculator.compute_metrics(poses, phases, fps, hybrik_frames=hybrik_frames)
-
-        # 3.5 Override with MHR 3D metrics when available (more accurate)
-        if mhr_data:
-            mhr_success = all(mhr_data.get(p, {}).get("joints3d") is not None 
-                             for p in ["address", "top", "impact"])
-            if mhr_success:
-                try:
-                    from pose.mhr_metrics import compute_all_mhr_metrics
-                    
-                    mhr_metrics = compute_all_mhr_metrics(mhr_data, handedness=handedness or "Right")
-                    print(f"[MHR] Computed 3D metrics: {list(mhr_metrics.keys())}")
-                    
-                    # Override existing metrics with MHR values (if not None)
-                    for key, value in mhr_metrics.items():
-                        if value is not None and hasattr(metrics, key):
-                            old_val = getattr(metrics, key)
-                            setattr(metrics, key, round(value, 2) if isinstance(value, float) else value)
-                            print(f"[MHR] {key}: {old_val} → {round(value, 2) if isinstance(value, float) else value}")
-                    
-                    print("[MHR] ✓ Metrics updated with 3D MHR data")
-                except Exception as e:
-                    print(f"[MHR] Failed to compute MHR metrics: {e}")
-                    import traceback
-                    traceback.print_exc()
-        
-        # 3.6 Compute extended MHR metrics (finish, sway, plane)
-        extended_metrics = {}
-        if mhr_data:
-            # Try to compute extended metrics even if some phases are missing
-            # The individual metric functions handle missing data gracefully
-            try:
-                from pose.mhr_finish_metrics import compute_finish_metrics
-                from pose.mhr_sway_metrics import compute_all_sway_metrics
-                from pose.mhr_plane_metrics import compute_swing_plane_metrics
-                
-                # Finish metrics (needs finish phase)
-                if mhr_data.get("finish", {}).get("joints3d") is not None:
-                    finish_metrics = compute_finish_metrics(mhr_data, handedness=handedness or "right")
-                    extended_metrics.update(finish_metrics)
-                    print(f"[MHR] ✓ Finish metrics: {list(finish_metrics.keys())}")
-                
-                # Sway metrics (can handle partial phases)
-                sway_metrics = compute_all_sway_metrics(mhr_data)
-                extended_metrics.update(sway_metrics)
-                print(f"[MHR] ✓ Sway metrics: {list(sway_metrics.keys())}")
-                
-                # Swing plane metrics (can handle partial phases)
-                plane_metrics = compute_swing_plane_metrics(mhr_data, handedness=handedness or "right")
-                extended_metrics.update(plane_metrics)
-                print(f"[MHR] ✓ Plane metrics: {list(plane_metrics.keys())}")
-                
-            except Exception as e:
-                print(f"[MHR] Extended metrics failed: {e}")
-                import traceback
-                traceback.print_exc()
-
-        # Auto-detect if missing
-        if not handedness:
-            handedness = calculator.detect_handedness(poses, phases)
-            print(f"Auto-detected handedness: {handedness}")
-            
-        if not club_type:
-            club_type = calculator.estimate_club_type(metrics)
-            print(f"Auto-detected club type: {club_type}")
-
-        # 4. Scoring - Always use default pro profile
-        ref_profile = get_reference_profile_for(club_type, view)
-            
-        scorer = Scorer()
-        scores = scorer.build_scores(metrics, ref_profile)
-
-        # 5. Feedback
-        feedback_service = FeedbackService()
-        feedback = feedback_service.generate_feedback(metrics, scores, handedness, club_type, db, ref_profile)
-
-        # 5.1 Skill Assessment
-        from app.services.skill_assessment import SkillAssessmentService
-        skill_service = SkillAssessmentService()
-        new_skill = skill_service.update_user_skill(current_user, metrics, scores)
-        print(f"User skill assessed as: {new_skill}")
-
-        # 6. Persistence
+        # To return the full AnalysisResponse, we need to fetch it from DB
         repo = AnalysisRepository(db)
+        s = repo.get_session(result["session_id"])
         
-        # Automatic Personal Best Detection
-        # Check if this score is higher than any existing session for this user/club/view
-        from app.models.db import SwingSession
-        max_score_session = db.query(SwingSession).filter(
-            SwingSession.user_id == current_user.id,
-            SwingSession.club_type == club_type,
-            SwingSession.view == view
-        ).order_by(SwingSession.overall_score.desc()).first()
+        return _map_session_to_response(s)
         
-        is_pb = False
-        if not max_score_session or scores.overall_score > max_score_session.overall_score:
-            is_pb = True
-            print(f"New Personal Best! Score: {scores.overall_score}")
-            # Optional: Unset previous PB if we want strict single PB
-            if max_score_session and max_score_session.is_personal_best:
-                max_score_session.is_personal_best = False
-                db.add(max_score_session)
-        
-        # First save the session to get an ID
-        db_session = repo.save_analysis(
-            metadata=SwingAnalysisRequest(handedness=handedness, view=view, club_type=club_type),
-            metrics=metrics,
-            phases=phases,
-            scores=scores,
-            feedback=feedback,
-            video_path=None,
-            user_id=current_user.id
-        )
-        
-        if is_pb:
-            db_session.is_personal_best = True
-            db.add(db_session)
-            db.commit()
-        
-        # Now save the video permanently using the session ID
-        video_storage = VideoStorage()
-        saved_video_path = video_storage.save_video(tmp_path, db_session.id)
-        print(f"[DEBUG] Saved video to: {saved_video_path}")
-        
-        # Verify file exists immediately after saving
-        abs_saved_path = os.path.abspath(saved_video_path)
-        if os.path.exists(abs_saved_path):
-            print(f"[DEBUG] Verified video file exists at: {abs_saved_path}, Size: {os.path.getsize(abs_saved_path)} bytes")
-        else:
-            print(f"[ERROR] Video file MISSING immediately after save at: {abs_saved_path}")
-        
-        # Extract and save key frame images (address/top/impact/finish)
-        try:
-            from pathlib import Path as _Path
-            abs_video_path = os.path.abspath(saved_video_path)
-            print(f"📸 Extracting key frame images from {abs_video_path}...")
-            
-            cap = cv2.VideoCapture(abs_video_path)
-            
-            # Fallback to original tmp video if saved one fails
-            if not cap.isOpened():
-                print(f"⚠️ Failed to open saved video: {abs_video_path}, falling back to original")
-                cap = cv2.VideoCapture(tmp_path)
-            
-            if cap.isOpened():
-                key_frame_indices = {
-                    "address": phases.address_frame,
-                    "top": phases.top_frame,
-                    "impact": phases.impact_frame,
-                    "finish": phases.finish_frame,
-                }
-                for phase_name, frame_idx in key_frame_indices.items():
-                    if frame_idx is not None and frame_idx >= 0:
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-                        ret, frame = cap.read()
-                        if ret:
-                            image_filename = f"{db_session.id}_{phase_name}.jpg"
-                            image_path = _Path("videos") / image_filename
-                            cv2.imwrite(str(image_path), frame)
-                            print(f"✅ Saved {phase_name} image to {image_path}")
-                        else:
-                            print(f"⚠️ Could not read frame {frame_idx} for {phase_name}")
-                cap.release()
-            else:
-                print("⚠️ Failed to open video file (both saved and original failed)")
-        except Exception as e:
-            print(f"⚠️ Failed to extract key frame images: {e}")
-        
-        # Save poses to JSON
-        import json
-        poses_data = []
-        def to_list_safe(x):
-            if x is None:
-                return None
-            try:
-                import numpy as np
-                if isinstance(x, np.ndarray):
-                    return x.tolist()
-            except Exception:
-                pass
-            if isinstance(x, list):
-                return x
-            try:
-                return x.tolist()
-            except Exception:
-                return x
-
-        if hybrik_frames:
-            # Prefer HybrIK outputs: include SMPL pose + joints; derive landmarks from SMPL joints
-            for f in hybrik_frames:
-                joints = f.get("joints_3d_24")
-                if joints is None:
-                    joints = f.get("joints_3d")
-                joints_list = to_list_safe(joints)
-                joints2d_list = to_list_safe(f.get("joints_2d_29"))
-                cam = to_list_safe(f.get("pred_camera"))
-                bbox = to_list_safe(f.get("bbox"))
-                # Lift 2D joints back into original image pixel coords if bbox is available
-                joints2d_orig = None
-                if bbox and joints2d_list and len(bbox) >= 4:
-                    try:
-                        x1, y1, x2, y2 = bbox
-                        joints2d_orig = [
-                            [x1 + pt[0], y1 + pt[1]] if pt and len(pt) >= 2 else None
-                            for pt in joints2d_list
-                        ]
-                    except Exception:
-                        joints2d_orig = None
-                mp_frame = smpl_to_mediapipe_format(f)  # includes 2D landmarks from HybrIK if available
-                poses_data.append({
-                    "frame_index": f.get("frame_idx", 0),
-                    "timestamp_ms": f.get("timestamp", 0) * 1000.0,
-                    "landmarks": mp_frame.get("landmarks", []),
-                    "smpl_landmarks": mp_frame.get("landmarks", []),
-                    "smpl_pose": to_list_safe(f.get("smpl_pose")),
-                    "smpl_joints": joints_list,
-                    "smpl_joints_2d": joints2d_list,
-                    "smpl_joints_2d_orig": joints2d_orig,
-                    "smpl_camera": cam,
-                    "smpl_bbox": bbox,
-                })
-        else:
-            for p in poses:
-                poses_data.append({
-                    "frame_index": p.frame_index,
-                    "timestamp_ms": p.timestamp_ms,
-                    "landmarks": [{"x": lm.x, "y": lm.y, "z": lm.z, "visibility": lm.visibility} for lm in p.landmarks],
-                    "smpl_pose": to_list_safe(getattr(p, "smpl_pose", None)),
-                    "smpl_joints": to_list_safe(getattr(p, "smpl_joints_3d", None) or getattr(p, "joints_3d_24", None)),
-                })
-            
-        poses_path = os.path.join("videos", f"{db_session.id}_poses.json")
-        with open(poses_path, "w") as f:
-            json.dump(poses_data, f)
-        
-        # Save MHR data to JSON for skeleton visualization
-        if mhr_data:
-            try:
-                mhr_save_data = {}
-                for phase_name, data in mhr_data.items():
-                    phase_data = {
-                        "frame": data.get("frame"),
-                    }
-                    # Convert numpy arrays to lists
-                    if data.get("joints3d") is not None:
-                        phase_data["joints3d"] = to_list_safe(data["joints3d"])
-                    if data.get("joints2d") is not None:
-                        phase_data["joints2d"] = to_list_safe(data["joints2d"])
-                    if data.get("error"):
-                        phase_data["error"] = data["error"]
-                    mhr_save_data[phase_name] = phase_data
-                
-                mhr_path = os.path.join("videos", f"{db_session.id}_mhr.json")
-                
-                # Add extended metrics if available (convert numpy types to native Python)
-                if extended_metrics:
-                    serializable_extended = {}
-                    for k, v in extended_metrics.items():
-                        if v is None:
-                            serializable_extended[k] = None
-                        elif isinstance(v, (bool,)):  # Handle bools first since bool is subclass of int
-                            serializable_extended[k] = bool(v)
-                        elif hasattr(v, 'item'):  # numpy scalar
-                            serializable_extended[k] = v.item()
-                        elif isinstance(v, (int, float, str)):
-                            serializable_extended[k] = v
-                        else:
-                            serializable_extended[k] = str(v)
-                    mhr_save_data["extended_metrics"] = serializable_extended
-                
-                with open(mhr_path, "w") as f:
-                    json.dump(mhr_save_data, f)
-                print(f"[MHR] ✓ Saved MHR data to {mhr_path}")
-            except Exception as e:
-                print(f"[MHR] Failed to save MHR data: {e}")
-        
-        # Update session with video path
-        db_session.video_url = saved_video_path
-        db.commit()
-
-        return AnalysisResponse(
-            session_id=db_session.id,
-            video_url=f"/api/v1/sessions/{db_session.id}/video",
-            is_personal_best=db_session.is_personal_best,
-            metadata=SwingAnalysisRequest(
-                handedness=handedness,
-                view=view,
-                club_type=club_type
-            ),
-            phases=phases,
-            metrics=metrics,
-            scores=scores,
-            feedback=feedback
-        )
-
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         # Cleanup temp file
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-@router.get("/sessions", response_model=List[AnalysisResponse])
+
+def _map_session_to_response(s: SwingSession) -> AnalysisResponse:
+    """Helper to map a DB SwingSession to Value Object Schema"""
+    m = s.metrics
+    
+    # Safely get attribute helper
+    def get_val(obj, key):
+        return getattr(obj, key, None)
+        
+    metrics = SwingMetrics(
+        tempo_ratio=m.tempo_ratio,
+        backswing_duration_ms=m.backswing_duration_ms,
+        downswing_duration_ms=m.downswing_duration_ms,
+        
+        # Core & MHR metrics
+        chest_turn_top_deg=get_val(m, 'chest_turn_top_deg'),
+        pelvis_turn_top_deg=get_val(m, 'pelvis_turn_top_deg'),
+        x_factor_top_deg=get_val(m, 'x_factor_top_deg'),
+        spine_angle_address_deg=get_val(m, 'spine_angle_address_deg'),
+        spine_angle_impact_deg=get_val(m, 'spine_angle_impact_deg'),
+        lead_arm_address_deg=get_val(m, 'lead_arm_address_deg'),
+        lead_arm_top_deg=get_val(m, 'lead_arm_top_deg'),
+        lead_arm_impact_deg=get_val(m, 'lead_arm_impact_deg'),
+        trail_elbow_address_deg=get_val(m, 'trail_elbow_address_deg'),
+        trail_elbow_top_deg=get_val(m, 'trail_elbow_top_deg'),
+        trail_elbow_impact_deg=get_val(m, 'trail_elbow_impact_deg'),
+        knee_flex_left_address_deg=get_val(m, 'knee_flex_left_address_deg'),
+        knee_flex_right_address_deg=get_val(m, 'knee_flex_right_address_deg'),
+        head_sway_range=get_val(m, 'head_sway_range'),
+        early_extension_amount=get_val(m, 'early_extension_amount'),
+        swing_path_index=get_val(m, 'swing_path_index'),
+        hand_height_at_top_index=get_val(m, 'hand_height_at_top_index'),
+        hand_width_at_top_index=get_val(m, 'hand_width_at_top_index'),
+        head_drop_cm=get_val(m, 'head_drop_cm'),
+        head_rise_cm=get_val(m, 'head_rise_cm'),
+        
+        # Extended MHR
+        finish_balance=get_val(m, 'finish_balance'),
+        chest_turn_finish_deg=get_val(m, 'chest_turn_finish_deg'),
+        pelvis_turn_finish_deg=get_val(m, 'pelvis_turn_finish_deg'),
+        spine_angle_top_deg=get_val(m, 'spine_angle_top_deg'),
+        spine_angle_finish_deg=get_val(m, 'spine_angle_finish_deg'),
+        extension_from_address_deg=get_val(m, 'extension_from_address_deg'),
+        head_rise_top_to_finish_cm=get_val(m, 'head_rise_top_to_finish_cm'),
+        head_lateral_shift_address_to_finish_cm=get_val(m, 'head_lateral_shift_address_to_finish_cm'),
+        hand_height_finish_norm=get_val(m, 'hand_height_finish_norm'),
+        hand_depth_finish_norm=get_val(m, 'hand_depth_finish_norm'),
+        pelvis_sway_top_cm=get_val(m, 'pelvis_sway_top_cm'),
+        pelvis_sway_impact_cm=get_val(m, 'pelvis_sway_impact_cm'),
+        pelvis_sway_finish_cm=get_val(m, 'pelvis_sway_finish_cm'),
+        pelvis_sway_range_cm=get_val(m, 'pelvis_sway_range_cm'),
+        shoulder_sway_top_cm=get_val(m, 'shoulder_sway_top_cm'),
+        shoulder_sway_impact_cm=get_val(m, 'shoulder_sway_impact_cm'),
+        shoulder_sway_finish_cm=get_val(m, 'shoulder_sway_finish_cm'),
+        shoulder_sway_range_cm=get_val(m, 'shoulder_sway_range_cm'),
+        swing_plane_top_deg=get_val(m, 'swing_plane_top_deg'),
+        swing_plane_impact_deg=get_val(m, 'swing_plane_impact_deg'),
+        swing_plane_deviation_top_deg=get_val(m, 'swing_plane_deviation_top_deg'),
+        swing_plane_deviation_impact_deg=get_val(m, 'swing_plane_deviation_impact_deg'),
+        swing_plane_shift_top_to_impact_deg=get_val(m, 'swing_plane_shift_top_to_impact_deg'),
+        arm_above_plane_at_top=get_val(m, 'arm_above_plane_at_top'),
+        
+        # Backward compatibility
+        shoulder_turn_top_deg=get_val(m, 'shoulder_turn_top_deg'),
+        hip_turn_top_deg=get_val(m, 'hip_turn_top_deg'),
+        spine_tilt_address_deg=get_val(m, 'spine_tilt_address_deg'),
+        spine_tilt_impact_deg=get_val(m, 'spine_tilt_impact_deg'),
+        head_movement_forward_cm=get_val(m, 'head_movement_forward_cm'),
+        head_movement_vertical_cm=get_val(m, 'head_movement_vertical_cm'),
+        shaft_lean_impact_deg=get_val(m, 'shaft_lean_impact_deg'),
+        lead_wrist_flexion_address_deg=get_val(m, 'lead_wrist_flexion_address_deg'),
+        lead_wrist_flexion_top_deg=get_val(m, 'lead_wrist_flexion_top_deg'),
+        lead_wrist_flexion_impact_deg=get_val(m, 'lead_wrist_flexion_impact_deg'),
+        lead_wrist_hinge_top_deg=get_val(m, 'lead_wrist_hinge_top_deg')
+    )
+    
+    # Load MHR extended metrics from JSON if needed? 
+    # NOTE: The job/service already populates most of these into DB columns if columns exist.
+    # If columns don't exist, we'd need to load JSON.
+    # For now, we assume the SwingMetrics logic in list_sessions catches them.
+    # But wait, logic in list_sessions loads from columns.
+    # The service updates columns.
+    # So we should be good if columns exist.
+    
+    
+    from reference.reference_profiles import get_reference_profile_for
+    from reference.scoring import Scorer
+    
+    ref = get_reference_profile_for(s.club_type, s.view)
+    scorer = Scorer()
+    scores = scorer.build_scores(metrics, ref)
+    
+    feedback = _get_feedback_from_db(s.feedback)
+    
+    phases = SwingPhases(
+        address_frame=s.phases.address_frame,
+        top_frame=s.phases.top_frame,
+        impact_frame=s.phases.impact_frame,
+        finish_frame=s.phases.finish_frame
+    )
+    
+    return AnalysisResponse(
+        session_id=s.id,
+        video_url=get_storage().get_url(s.video_url) if s.video_url else None,
+        is_personal_best=s.is_personal_best,
+        metadata=SwingAnalysisRequest(
+            handedness=s.handedness,
+            view=s.view,
+            club_type=s.club_type
+        ),
+        phases=phases,
+        metrics=metrics,
+        scores=scores,
+        feedback=feedback,
+        created_at=s.created_at
+    )
+
+
+@router.get("/sessions", response_model=List[SessionSummaryResponse])
 def list_sessions(
     skip: int = 0,
     limit: int = 50, 
@@ -574,79 +324,23 @@ def list_sessions(
     
     results = []
     for s in sessions:
-        # Helper to map metrics
-        m = s.metrics
-        metrics = SwingMetrics(
-            tempo_ratio=m.tempo_ratio,
-            backswing_duration_ms=m.backswing_duration_ms,
-            downswing_duration_ms=m.downswing_duration_ms,
-            # New metrics (10 core metrics)
-            chest_turn_top_deg=getattr(m, 'chest_turn_top_deg', None),
-            pelvis_turn_top_deg=getattr(m, 'pelvis_turn_top_deg', None),
-            x_factor_top_deg=getattr(m, 'x_factor_top_deg', None),
-            spine_angle_address_deg=getattr(m, 'spine_angle_address_deg', None),
-            spine_angle_impact_deg=getattr(m, 'spine_angle_impact_deg', None),
-            lead_arm_address_deg=getattr(m, 'lead_arm_address_deg', None),
-            lead_arm_top_deg=getattr(m, 'lead_arm_top_deg', None),
-            lead_arm_impact_deg=getattr(m, 'lead_arm_impact_deg', None),
-            trail_elbow_address_deg=getattr(m, 'trail_elbow_address_deg', None),
-            trail_elbow_top_deg=getattr(m, 'trail_elbow_top_deg', None),
-            trail_elbow_impact_deg=getattr(m, 'trail_elbow_impact_deg', None),
-            knee_flex_left_address_deg=getattr(m, 'knee_flex_left_address_deg', None),
-            knee_flex_right_address_deg=getattr(m, 'knee_flex_right_address_deg', None),
-            head_sway_range=getattr(m, 'head_sway_range', None),
-            early_extension_amount=getattr(m, 'early_extension_amount', None),
-            swing_path_index=getattr(m, 'swing_path_index', None),
-            hand_height_at_top_index=getattr(m, 'hand_height_at_top_index', None),
-            hand_width_at_top_index=getattr(m, 'hand_width_at_top_index', None),
-            head_drop_cm=getattr(m, 'head_drop_cm', None),
-            head_rise_cm=getattr(m, 'head_rise_cm', None),
-            # Backward compatibility (old field names)
-            shoulder_turn_top_deg=getattr(m, 'shoulder_turn_top_deg', None),
-            hip_turn_top_deg=getattr(m, 'hip_turn_top_deg', None),
-            spine_tilt_address_deg=getattr(m, 'spine_tilt_address_deg', None),
-            spine_tilt_impact_deg=getattr(m, 'spine_tilt_impact_deg', None),
-            head_movement_forward_cm=getattr(m, 'head_movement_forward_cm', None),
-            head_movement_vertical_cm=getattr(m, 'head_movement_vertical_cm', None),
-            shaft_lean_impact_deg=getattr(m, 'shaft_lean_impact_deg', None),
-            lead_wrist_flexion_address_deg=getattr(m, 'lead_wrist_flexion_address_deg', None),
-            lead_wrist_flexion_top_deg=getattr(m, 'lead_wrist_flexion_top_deg', None),
-            lead_wrist_flexion_impact_deg=getattr(m, 'lead_wrist_flexion_impact_deg', None),
-            lead_wrist_hinge_top_deg=getattr(m, 'lead_wrist_hinge_top_deg', None)
-        )
+        # Optimization: Don't load full metrics/feedback. Just Summary.
+        # overall_score is stored directly on SwingSession class in db.py
         
-        from reference.reference_profiles import get_reference_profile_for
-        from reference.scoring import Scorer
-        
-        ref = get_reference_profile_for(s.club_type, s.view)
-        scorer = Scorer()
-        scores = scorer.build_scores(metrics, ref)
-        
-        # Feedback
-        feedback = _get_feedback_from_db(s.feedback)
-        
-        phases = SwingPhases(
-            address_frame=s.phases.address_frame,
-            top_frame=s.phases.top_frame,
-            impact_frame=s.phases.impact_frame,
-            finish_frame=s.phases.finish_frame
-        )
-
-        results.append(AnalysisResponse(
+        results.append(SessionSummaryResponse(
             session_id=s.id,
+            scores=SimpleScores(overall_score=s.overall_score),
             metadata=SwingAnalysisRequest(
                 handedness=s.handedness,
                 view=s.view,
                 club_type=s.club_type
             ),
-            phases=phases,
-            metrics=metrics,
-            scores=scores,
-            feedback=feedback,
+            is_personal_best=s.is_personal_best,
             created_at=s.created_at
         ))
         
     return results
+
 
 @router.get("/sessions/{session_id}", response_model=AnalysisResponse)
 def get_session(session_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
@@ -909,6 +603,7 @@ def get_session_frame_image(
     db: Session = Depends(get_db)
 ):
     """Get key frame image (address, top, impact, finish)"""
+    # ... (Auth logic omitted for brevity, keeping it concise or reusing imports)
     # Manual Auth (same as video)
     from jose import jwt, JWTError
     from app.core.security import SECRET_KEY, ALGORITHM
@@ -934,14 +629,18 @@ def get_session_frame_image(
     if s.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    image_filename = f"{session_id}_{phase_name}.jpg"
-    image_path = os.path.join("videos", image_filename)
-    
-    if not os.path.exists(image_path):
+    key = f"videos/{session_id}_{phase_name}.jpg"
+    storage = get_storage()
+    image_path = None
+    try:
+        image_path = storage.get_path(key)
+    except:
+        pass
+        
+    if not image_path or not os.path.exists(image_path):
         raise HTTPException(status_code=404, detail="Frame image not found")
         
     return FileResponse(image_path)
-
 
 
 @router.get("/sessions/{session_id}/poses")
@@ -955,16 +654,20 @@ def get_session_poses(session_id: str, db: Session = Depends(get_db), current_us
     if s.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    # Load original poses
-    poses_path = os.path.join("videos", f"{session_id}_poses.json")
-    if not os.path.exists(poses_path):
+    # Load original poses via storage
+    key = f"videos/{session_id}_poses.json"
+    storage = get_storage()
+    try:
+        poses_path = storage.get_path(key)
+        if not os.path.exists(poses_path):
+            return []
+            
+        import json
+        with open(poses_path, "r") as f:
+            poses_data = json.load(f)
+        return poses_data
+    except:
         return []
-        
-    import json
-    with open(poses_path, "r") as f:
-        poses_data = json.load(f)
-                
-    return poses_data
 
 @router.delete("/sessions/{session_id}")
 def delete_session(session_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
@@ -979,26 +682,20 @@ def delete_session(session_id: str, db: Session = Depends(get_db), current_user:
     # Delete from DB
     repo.delete_session(session_id)
     
-    # Delete files
-    storage = VideoStorage()
-    storage.delete_video(session_id)
+    # Delete files via storage
+    storage = get_storage()
     
-    # Delete poses JSON
-    poses_path = os.path.join("videos", f"{session_id}_poses.json")
-    if os.path.exists(poses_path):
-        try:
-            os.remove(poses_path)
-        except OSError:
-            pass
-            
-    # Delete key frame images
+    # 1. Video
+    # Try video_url field if it exists and looks like a key, else fallback
+    if s.video_url:
+        storage.delete(s.video_url)
+    
+    # 2. Poses
+    storage.delete(f"videos/{session_id}_poses.json")
+    
+    # 3. Keyframes
     for phase in ["address", "top", "impact", "finish"]:
-        img_path = os.path.join("videos", f"{session_id}_{phase}.jpg")
-        if os.path.exists(img_path):
-            try:
-                os.remove(img_path)
-            except OSError:
-                pass
+        storage.delete(f"videos/{session_id}_{phase}.jpg")
                 
     return {"status": "success", "message": "Session deleted"}
 
@@ -1013,20 +710,23 @@ def get_session_key_frames(session_id: str, db: Session = Depends(get_db), curre
     if s.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
     
-    # Load poses from JSON file
-    poses_path = os.path.join("videos", f"{session_id}_poses.json")
-        
-    if not os.path.exists(poses_path):
-        return []
+    # Load poses from JSON file via storage
+    key = f"videos/{session_id}_poses.json"
+    storage = get_storage()
     
     import json
-    with open(poses_path, "r") as f:
-        poses_data = json.load(f)
-        
+    
+    try:
+        poses_path = storage.get_path(key)
+        if not os.path.exists(poses_path):
+            return []
+        with open(poses_path, "r") as f:
+            poses_data = json.load(f)
+    except:
+        return []
+    
     # NOTE: Blending is now applied during analysis.
     
-    # Convert to FramePose format
-    from pose.types import FramePose, Point3D
     # Convert to FramePose format
     from pose.types import FramePose, Point3D
     poses = []
@@ -1046,14 +746,14 @@ def get_session_key_frames(session_id: str, db: Session = Depends(get_db), curre
             timestamp_ms = p["timestamp_sec"] * 1000.0
         
         pose = FramePose(
-            frame_index=p.get("frame_index", 0),
-            timestamp_ms=timestamp_ms or 0.0,
-            landmarks=landmarks,
-            smpl_pose=p.get("smpl_pose"),
-            smpl_joints=p.get("smpl_joints") or p.get("smpl_joints_3d") or p.get("joints_3d_24") or p.get("joints_3d"),
-            smpl_joints_2d=p.get("smpl_joints_2d") or p.get("joints_2d_29"),
-            smpl_camera=p.get("smpl_camera"),
-            smpl_bbox=p.get("smpl_bbox"),
+             frame_index=p.get("frame_index", 0),
+             timestamp_ms=timestamp_ms or 0.0,
+             landmarks=landmarks,
+             smpl_pose=p.get("smpl_pose"),
+             smpl_joints=p.get("smpl_joints") or p.get("smpl_joints_3d") or p.get("joints_3d_24") or p.get("joints_3d"),
+             smpl_joints_2d=p.get("smpl_joints_2d") or p.get("joints_2d_29"),
+             smpl_camera=p.get("smpl_camera"),
+             smpl_bbox=p.get("smpl_bbox"),
         )
         poses.append(pose)
     
@@ -1068,16 +768,21 @@ def get_session_key_frames(session_id: str, db: Session = Depends(get_db), curre
     
     key_frames = extract_key_frames(poses, phases)
     
-    # Load MHR data if available (for better skeleton visualization)
+    key_frames = extract_key_frames(poses, phases)
+    
+    # Load MHR data if available
+    storage = get_storage()
+    
     mhr_data = None
-    mhr_path = os.path.join("videos", f"{session_id}_mhr.json")
-    if os.path.exists(mhr_path):
-        try:
+    mhr_key = f"videos/{session_id}_mhr.json"
+    try:
+        mhr_path = storage.get_path(mhr_key)
+        if os.path.exists(mhr_path):
             with open(mhr_path, "r") as f:
                 mhr_data = json.load(f)
             print(f"[KeyFrames] Loaded MHR data from {mhr_path}")
-        except Exception as e:
-            print(f"[KeyFrames] Failed to load MHR data: {e}")
+    except Exception as e:
+        print(f"[KeyFrames] Failed to load MHR data: {e}")
     
     # Add image URLs
     pose_by_frame = {p.frame_index: p for p in poses}
@@ -1108,11 +813,14 @@ def get_session_key_frames(session_id: str, db: Session = Depends(get_db), curre
                 kf["mhr_joints_3d"] = mhr_phase["joints3d"]
 
         if phase_name:
-            # Check if image exists
-            image_filename = f"{session_id}_{phase_name}.jpg"
-            image_path = os.path.join("videos", image_filename)
-            if os.path.exists(image_path):
-                kf["image_url"] = f"/api/v1/sessions/{session_id}/frames/{phase_name}"
+            # Check if image exists using Storage
+            image_key = f"videos/{session_id}_{phase_name}.jpg"
+            try:
+                image_path = storage.get_path(image_key)
+                if os.path.exists(image_path):
+                    kf["image_url"] = f"/api/v1/sessions/{session_id}/frames/{phase_name}"
+            except:
+                pass
                 
     return key_frames
 

@@ -8,35 +8,16 @@
         token,
         waitForAuthReady,
     } from "$lib/stores/auth";
+    import {
+        dashboardStats,
+        recentSessions,
+        sessionsLoaded,
+    } from "$lib/stores/sessions"; // Import the new store
     import OnboardingTour from "$lib/components/OnboardingTour.svelte";
 
-    interface DashboardStats {
-        total_sessions: number;
-        average_score: number;
-        last_session_date: string | null;
-        personal_bests: {
-            driver: number | null;
-            iron: number | null;
-            wedge: number | null;
-        };
-    }
-
-    interface Session {
-        session_id: string;
-        scores: {
-            overall_score: number;
-        };
-        metadata: {
-            club_type: string;
-            view: string;
-        };
-        is_personal_best: boolean;
-        created_at?: string;
-    }
-
-    let stats: DashboardStats | null = null;
-    let recentSessions: Session[] = [];
-    let loading = true;
+    // Use store values directly via auto-subscription ($) in the template
+    // Local loading state only strictly needed if store is empty
+    let initialLoading = true;
 
     onMount(async () => {
         await initializeAuth();
@@ -50,21 +31,37 @@
             return;
         }
 
-        try {
-            // Fetch Stats
-            const statsRes = await fetch("/api/v1/analytics/dashboard-stats", {
-                headers: { Authorization: `Bearer ${$token}` },
-            });
-            if (statsRes.ok) stats = await statsRes.json();
+        // If we have data in the store, show it immediately!
+        if ($sessionsLoaded) {
+            initialLoading = false;
+        }
 
-            // Load initial sessions
-            await loadSessions();
+        try {
+            // Fetch stats in background
+            fetchStats();
+            // Load sessions (background or foreground depending on loading state)
+            await loadSessions(false);
         } catch (e) {
             console.error("Failed to load dashboard data", e);
         } finally {
-            loading = false;
+            initialLoading = false;
         }
     });
+
+    async function fetchStats() {
+        if (!$isAuthenticated) return;
+        try {
+            const statsRes = await fetch("/api/v1/analytics/dashboard-stats", {
+                headers: { Authorization: `Bearer ${$token}` },
+            });
+            if (statsRes.ok) {
+                const data = await statsRes.json();
+                dashboardStats.set(data); // Update store
+            }
+        } catch (e) {
+            console.error("Failed to fetch stats", e);
+        }
+    }
 
     // Filtering & Pagination State
     let selectedView: string | null = null;
@@ -84,10 +81,14 @@
         { id: "wedge", label: "Wedge" },
     ];
 
-    async function loadSessions() {
+    async function loadSessions(resetPage = false) {
         if (!$isAuthenticated) return;
 
-        loading = true; // Show loading state while fetching
+        // Only show spinner if we don't have data yet, or if explicitly explicit reload
+        if (!$sessionsLoaded && initialLoading) {
+            // Keep loading true
+        }
+
         try {
             const params = new URLSearchParams({
                 limit: limit.toString(),
@@ -102,10 +103,12 @@
             });
 
             if (res.ok) {
-                recentSessions = await res.json();
+                const data = await res.json();
+                recentSessions.set(data); // Update store
+                sessionsLoaded.set(true);
             }
         } finally {
-            loading = false;
+            // initialLoading handled in onMount
         }
     }
 
@@ -113,27 +116,27 @@
         if (selectedView === view) selectedView = null;
         else selectedView = view;
         currentPage = 1;
-        loadSessions();
+        loadSessions(true);
     }
 
     function toggleClub(club: string) {
         if (selectedClub === club) selectedClub = null;
         else selectedClub = club;
         currentPage = 1;
-        loadSessions();
+        loadSessions(true);
     }
 
     function nextPage() {
-        if (recentSessions.length === limit) {
+        if ($recentSessions.length === limit) {
             currentPage++;
-            loadSessions();
+            loadSessions(true);
         }
     }
 
     function prevPage() {
         if (currentPage > 1) {
             currentPage--;
-            loadSessions();
+            loadSessions(true);
         }
     }
 
@@ -166,11 +169,11 @@
         </div>
     </div>
 
-    {#if loading}
+    {#if initialLoading}
         <div class="text-center py-12 text-gray-500 dark:text-slate-400">
             Loading dashboard...
         </div>
-    {:else if stats}
+    {:else if $dashboardStats}
         <!-- Stats Grid -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
             <!-- Quick Stats -->
@@ -185,10 +188,10 @@
                 <div
                     class="mt-2 text-3xl font-bold text-gray-900 dark:text-slate-50"
                 >
-                    {stats.total_sessions}
+                    {$dashboardStats.total_sessions}
                 </div>
                 <div class="mt-1 text-sm text-gray-500 dark:text-slate-500">
-                    Last: {formatDate(stats.last_session_date)}
+                    Last: {formatDate($dashboardStats.last_session_date)}
                 </div>
             </div>
 
@@ -203,7 +206,7 @@
                 <div
                     class="mt-2 text-3xl font-bold text-green-600 dark:text-emerald-400"
                 >
-                    {stats.average_score}
+                    {$dashboardStats.average_score}
                 </div>
                 <div class="mt-1 text-sm text-gray-500 dark:text-slate-500">
                     Overall performance
@@ -224,7 +227,8 @@
                             >Driver</span
                         >
                         <span class="font-bold text-gray-900 dark:text-slate-50"
-                            >{stats.personal_bests.driver || "-"}</span
+                            >{$dashboardStats.personal_bests.driver ||
+                                "-"}</span
                         >
                     </div>
                     <div class="flex justify-between items-center">
@@ -232,7 +236,7 @@
                             >Iron</span
                         >
                         <span class="font-bold text-gray-900 dark:text-slate-50"
-                            >{stats.personal_bests.iron || "-"}</span
+                            >{$dashboardStats.personal_bests.iron || "-"}</span
                         >
                     </div>
                     <div class="flex justify-between items-center">
@@ -240,7 +244,7 @@
                             >Wedge</span
                         >
                         <span class="font-bold text-gray-900 dark:text-slate-50"
-                            >{stats.personal_bests.wedge || "-"}</span
+                            >{$dashboardStats.personal_bests.wedge || "-"}</span
                         >
                     </div>
                 </div>
@@ -319,7 +323,7 @@
                 </span>
             </div>
             <ul class="divide-y divide-gray-200 dark:divide-slate-800">
-                {#each recentSessions as session}
+                {#each $recentSessions as session}
                     <li>
                         <a
                             href={`/sessions/${session.session_id}`}
@@ -374,7 +378,7 @@
                         </a>
                     </li>
                 {/each}
-                {#if recentSessions.length === 0}
+                {#if $recentSessions.length === 0}
                     <li
                         class="px-6 py-8 text-center text-gray-500 dark:text-slate-500"
                     >
@@ -405,7 +409,7 @@
                 </div>
                 <button
                     on:click={nextPage}
-                    disabled={recentSessions.length < limit}
+                    disabled={$recentSessions.length < limit}
                     class="relative inline-flex items-center px-4 py-2 border border-gray-300 dark:border-slate-600 text-sm font-medium rounded-md text-gray-700 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     Next

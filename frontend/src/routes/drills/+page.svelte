@@ -1,7 +1,9 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import { token } from "$lib/stores/auth";
+    import { drills as drillsStore, drillsLoaded } from "$lib/stores/sessions";
     import { fade, fly } from "svelte/transition";
+    import { get } from "svelte/store";
 
     interface Drill {
         id: string;
@@ -13,7 +15,7 @@
         target_metric?: string;
     }
 
-    let drills: Drill[] = [];
+    let displayedDrills: Drill[] = [];
     let loading = true;
     let error = "";
 
@@ -37,7 +39,10 @@
     const difficulties = ["Beginner", "Intermediate", "Advanced", "All Levels"];
 
     async function fetchDrills() {
-        loading = true;
+        // Don't show loading spinner if we already have content showing
+        if (displayedDrills.length === 0) {
+            loading = true;
+        }
         error = "";
         try {
             let url = "http://localhost:8000/api/v1/drills/";
@@ -57,7 +62,14 @@
             });
 
             if (res.ok) {
-                drills = await res.json();
+                const data = await res.json();
+                displayedDrills = data;
+
+                // Only update cache if we are in the default view (no filters)
+                if (!selectedCategory && !selectedDifficulty && !searchQuery) {
+                    drillsStore.set(data);
+                    drillsLoaded.set(true);
+                }
             } else {
                 error = "Failed to load drills";
             }
@@ -86,6 +98,12 @@
     }
 
     onMount(() => {
+        // Initialize from cache if available
+        if (get(drillsLoaded)) {
+            displayedDrills = get(drillsStore);
+            loading = false;
+        }
+        // Always fetch fresh data in background
         fetchDrills();
     });
 </script>
@@ -99,7 +117,7 @@
                 Drill Library
             </h1>
             <p class="text-gray-500 dark:text-slate-400 mt-1">
-                Found {drills.length} drills for your game
+                Found {displayedDrills.length} drills for your game
             </p>
         </div>
 
@@ -184,7 +202,7 @@
             <strong class="font-bold">Error!</strong>
             <span class="block sm:inline">{error}</span>
         </div>
-    {:else if drills.length === 0}
+    {:else if displayedDrills.length === 0}
         <div
             class="text-center py-20 bg-gray-50 dark:bg-slate-900/50 rounded-xl border border-dashed border-gray-300 dark:border-slate-700"
         >
@@ -218,7 +236,7 @@
         </div>
     {:else}
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {#each drills as drill (drill.id)}
+            {#each displayedDrills as drill (drill.id)}
                 <div
                     in:fade={{ duration: 200 }}
                     class="group bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl shadow-sm hover:shadow-xl hover:border-green-500/30 dark:hover:border-emerald-500/30 transition-all duration-300 flex flex-col h-full"

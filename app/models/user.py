@@ -12,7 +12,8 @@ class User(Base):
 
     id = Column(String, primary_key=True, default=generate_uuid)
     email = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
+    hashed_password = Column(String, nullable=True) # Nullable for OAuth users
+    auth_provider = Column(String, default="local") # local, google, apple
     full_name = Column(String)
     handicap = Column(Float, default=0.0)
     skill_level = Column(String, default="Beginner") # Beginner, Intermediate, Advanced, Pro
@@ -24,4 +25,6 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
+    # Relationships
     sessions = relationship("SwingSession", back_populates="user")
+    credits = relationship("Credits", uselist=False, back_populates="user")
